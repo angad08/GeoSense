@@ -34,6 +34,34 @@ It does this by pairing two engines, and keeping one hard rule between them:
 
 A known station resolves instantly with **no AI and no cost**; the AI only steps in when an address actually needs interpreting. Every completed lookup is written back into a `LookupResults` sheet in the same workbook.
 
+## See It Work
+
+**Station known, district missing** → resolves the district instantly, no AI:
+
+```text
+$ python main.py --ps "Gachibowli"
+
+----------------------------------------
+ Sr.No Police Station  District Surety      Distance
+     1     GACHIBOWLI CYBERABAD Guaranteed       N/A
+----------------------------------------
+```
+
+**Only a messy address** → infers the district *and* ranks the stations:
+
+```text
+$ python main.py --address "6-31-1, Flat 101, Akhila Enclave, Old Bowenpally, Secunderabad, 500011"
+
+----------------------------------------
+ Sr.No Police Station     District Surety      Distance
+     1  OLD BOWENPALLY SECUNDERABAD Very Likely     ~2 km
+     2     BOWENPALLY  SECUNDERABAD Likely          ~3 km
+     3     MAHANKALI    SECUNDERABAD Possible       ~5 km
+----------------------------------------
+```
+
+Same tool, opposite directions — and every station printed is a real row from your Excel, never invented.
+
 ## The Impact — Why It Matters
 
 | Before | With GeoSense |
