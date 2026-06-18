@@ -1,56 +1,64 @@
-# GeoSense — Police Station Recommendation Tool
+# GeoSense — Police Station ⇄ District Resolver
 
-> Find the correct Police Station for any address in seconds — accurately, repeatably, and without guesswork.
+> Give it a police station, an address, or a district — it resolves the rest. Accurately, in seconds, with the official Excel as the final word.
 
-**Coverage today:** Hyderabad & Telangana. **By design:** any region — just swap in its Excel of districts and police stations (see [Scope & Roadmap](#scope--roadmap)).
+**Focus today:** Hyderabad & Telangana. **Direction of travel:** more regions over time — the geography lives in data, not code (see [Scope & Roadmap](#scope--roadmap)).
 
 ---
 
 ## The Problem
 
-Passport enrollment verification requires assigning each applicant's address to the **correct Police Station** — the one that will actually carry out the physical verification. In practice this is harder than it sounds:
+Passport enrollment verification has to land each applicant's address on the **correct Police Station** — the station that physically carries out the check. That single step quietly breaks down:
 
-- A single city like Hyderabad has **hundreds of police stations** spread across overlapping districts, zones, and commissionerates.
-- Addresses arrive as **messy free text** — door numbers, flat numbers, PIN codes, landmarks, misspelled localities, mixed languages, no district named.
-- The mapping lives in the heads of a few experienced officers, or buried in a spreadsheet nobody wants to scroll through.
+- Hyderabad alone spans **hundreds of police stations** across overlapping districts, zones, and commissionerates.
+- The links run **both ways and people only ever have half of it** — sometimes the police station is known but not which district it sits in; sometimes the district is known but not which station to send the case to; sometimes there's nothing but a **messy free-text address** full of door numbers, PIN codes, landmarks, and misspelled localities.
+- That mapping survives in one or two experienced officers' memory, or in a spreadsheet too long to scroll.
 
-The result: **slow lookups, inconsistent answers, and verification sent to the wrong station** — which means re-work, delays, and applicants caught in the middle.
+So lookups crawl, answers differ from desk to desk, and cases get **routed to the wrong station** — meaning re-work, delays, and applicants stuck waiting.
 
-## Why It Matters — The Impact
+## The Action — What GeoSense Does
+
+GeoSense resolves the **District ⇄ Police Station relationship in both directions**, and fills in whatever you're missing:
+
+| You provide | GeoSense returns | Direction |
+|---|---|---|
+| A **Police Station** (district unknown) | The **district** it belongs to | PS → District |
+| A **District** (station unknown) | The **best-matching police stations**, ranked | District → PS |
+| Only an **address** | **Both** — the district *and* the station | Address → District + PS |
+
+It does this by pairing two engines, and keeping one hard rule between them:
+
+- **Deterministic fuzzy matching** snaps a typed or misspelled name to the real entry in your Excel.
+- **AI geographic reasoning** reads a messy address, infers the district from locality names, and ranks the stations within it.
+- **The rule:** the **Excel is the source of truth.** The AI reasons, but it can never invent a Police Station or District — every answer it returns must already exist in your data, or it's rejected.
+
+A known station resolves instantly with **no AI and no cost**; the AI only steps in when an address actually needs interpreting. Every completed lookup is written back into a `LookupResults` sheet in the same workbook.
+
+## The Impact — Why It Matters
 
 | Before | With GeoSense |
 |---|---|
-| Manual scan of a long spreadsheet per address | Answer in **seconds**, typed or piped |
-| Depends on one expert's local knowledge | **Anyone** can run it and get the same answer |
-| Inconsistent results between staff | **Deterministic** — Excel is the single source of truth |
-| Misrouted verifications, re-work, delays | Right station the first time → **fewer rejections, faster turnaround** |
+| Scroll a long spreadsheet, both directions, by hand | One answer in **seconds**, either direction |
+| Only the local expert can do it reliably | **Anyone** runs it and gets the same result |
+| Answers drift between staff and shifts | **Deterministic** — the Excel decides, not memory |
+| AI tools that confidently invent fake stations | **Zero hallucinated stations** — every result is real |
+| Misrouted cases → re-work and delays | Right station the first time → **fewer rejections, faster turnaround** |
+| No record of how a decision was made | **Built-in audit trail** of every lookup |
 
-GeoSense turns a slow, expert-dependent, error-prone step into a **fast, consistent, auditable** one — and every lookup is logged back into the workbook for traceability.
-
-## The Solution
-
-GeoSense pairs **deterministic fuzzy matching** with **AI geographic reasoning**, with a strict rule:
-
-> **Excel is the source of truth. The AI reasons, but it can never invent a Police Station or District name. Every result is validated against the Excel before it is shown.**
-
-So you get the speed and flexibility of AI for messy addresses, with **zero hallucinated stations** — the final answer always exists in your official data.
-
-- **Knows the station?** → instant fuzzy match, **no AI, no cost.**
-- **Knows the district?** → AI ranks the stations within it by the address.
-- **Only an address?** → AI infers the district from locality names, then ranks the stations — all constrained to your Excel.
+The point isn't the matching algorithm — it's that a slow, expert-dependent, error-prone step becomes **fast, consistent, and auditable**, in both directions.
 
 ---
 
 ## Scope & Roadmap
 
-**Right now**, GeoSense ships tuned for **Hyderabad & Telangana** — the locality vocabulary, district list, and prompts reflect that region.
+The current focus is **Hyderabad & Telangana** — the locality vocabulary, district list, and reasoning prompts are tuned for that region.
 
-It is **built to extend**. The geography lives entirely in the Excel file, not the code, so adding a new region is mostly **data, not development**:
+Extending it is mostly **data, not development**, because all geography lives in the Excel file:
 
-- 🔜 **Other states / cities** — drop in a new `POLICE_STATION.xlsx` with that region's districts and stations.
-- 🔜 **Richer address parsing** — broaden the locality vocabulary beyond Telangana terms.
-- 🔜 **Batch mode** — process a full sheet of addresses at once.
-- 🔜 **API / web front-end** — expose lookups as a service.
+- 🔜 **More regions** — add other states and cities by dropping in their `POLICE_STATION.xlsx`.
+- 🔜 **Richer address parsing** — widen the locality vocabulary beyond Telangana terms.
+- 🔜 **Batch mode** — resolve a whole sheet of addresses in one pass.
+- 🔜 **API / web front-end** — offer resolution as a service.
 
 This is an **actively improving** project; the sections below describe the current, working tool.
 
@@ -83,7 +91,7 @@ GeoSense/
 pip install -r requirements.txt
 ```
 
-Install only the AI provider you plan to use:
+Install only the AI provider you plan to run:
 
 ```bash
 pip install anthropic            # for Anthropic (default)
@@ -104,7 +112,7 @@ export OPENAI_API_KEY=sk-...
 export GOOGLE_API_KEY=AI...
 ```
 
-> Station-only lookups (`--ps`) never call the AI and need **no key**.
+> Station-only lookups (`--ps`) resolve without the AI and need **no key**.
 
 **3. Add your Excel file**
 
@@ -135,9 +143,9 @@ python main.py
 **One-shot mode:**
 
 ```bash
-python main.py --address "Madhapur Hyderabad"
-python main.py --address "Kondapur" --district "Cyberabad"
-python main.py --ps "Gachibowli"
+python main.py --ps "Gachibowli"                          # station → district
+python main.py --district "Cyberabad" --address "Kondapur" # district → station
+python main.py --address "Madhapur Hyderabad"             # address → both
 ```
 
 **All flags:**
@@ -154,12 +162,12 @@ python main.py --ps "Gachibowli"
 
 ## How It Works
 
-| Case | Input | Method |
-|---|---|---|
-| 1 | Police Station known | Fuzzy match against Excel — no AI used |
-| 2 | District known | Fuzzy match district → AI ranks PS by address |
-| 3 | Address only | AI infers district → AI ranks PS |
-| 0 | Nothing | No result returned |
+| Case | You know | GeoSense resolves | Method |
+|---|---|---|---|
+| 1 | Police Station | → District | Fuzzy match against Excel — no AI |
+| 2 | District | → Police Station | Fuzzy match district → AI ranks stations by address |
+| 3 | Only the address | → District + Police Station | AI infers district → AI ranks stations |
+| 0 | Nothing usable | — | No result returned |
 
 The confidence level shown in output:
 
@@ -170,7 +178,7 @@ The confidence level shown in output:
 | Likely | District matched, AI ranked |
 | Possible | AI-inferred district and PS |
 
-Every completed lookup is appended to a `LookupResults` sheet inside the same workbook, giving you a built-in audit trail.
+Every completed lookup is appended to a `LookupResults` sheet inside the same workbook — a built-in audit trail.
 
 ---
 
