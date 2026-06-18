@@ -1,0 +1,11 @@
+# GeoSense — required packages
+# Install all:  pip install -r requirements.txt
+
+pandas
+openpyxl          # Excel read support for pandas
+rapidfuzz
+
+# AI provider — install only the one you need (set AI_PROVIDER in config.py)
+anthropic          # pip install anthropic
+# openai           # pip install openai
+# google-generativeai  # pip install google-generativeai

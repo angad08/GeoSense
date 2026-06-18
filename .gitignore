@@ -1,0 +1,9 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Local Claude Code settings (machine-specific)
+.claude/
+
+# Source data / lookup log workbook — supply your own, never commit (may contain PII)
+data/*.xlsx
