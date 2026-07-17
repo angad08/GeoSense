@@ -91,9 +91,21 @@ def find_district_in_excel(query, df):
     Search all Districts in the DataFrame for a query string.
     Returns a list of dicts sorted best-score first.
     Each dict: { district, score }
+
+    An exact (case-insensitive) match is preferred and returned immediately.
+    This prevents a shorter district name from tying the true match on
+    fuzzy score — e.g. 'WARANGAL' scoring 100 (as a substring) against a
+    query of 'WARANGAL-HANUMAKONDA'. Only when no exact match exists does
+    the fuzzy fallback below run.
     """
     all_districts = df[COL_DISTRICT].unique().tolist()
-    results       = []
+
+    q = query.strip().upper()
+    for d in all_districts:
+        if str(d).strip().upper() == q:
+            return [{"district": d, "score": 100.0}]
+
+    results = []
 
     for d in all_districts:
         s = score_match(query, d)
