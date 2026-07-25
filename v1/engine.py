@@ -10,14 +10,14 @@ structured result dict.
   Case 0 — Nothing worked → empty result
 """
 
-from config import COL_DISTRICT, COL_PS, TOP_N, AI_PROVIDER, AI_MODEL, FUZZY_CUTOFF
-from matcher import (
+from common.config import COL_DISTRICT, COL_PS, TOP_N, AI_PROVIDER, AI_MODEL, FUZZY_CUTOFF
+from common.matcher import (
     find_ps_in_excel,
     find_district_in_excel,
     find_ps_by_localities,
     find_district_by_localities,
 )
-from ai_engine import rankingAgent, inferDistrict
+from v1.ai_engine import rankingAgent, inferDistrict
 
 
 def find_best_match(address, known_ps, known_district, df, client):

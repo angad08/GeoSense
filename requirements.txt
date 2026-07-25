@@ -1,11 +1,14 @@
-# GeoSense — required packages
-# Install all:  pip install -r requirements.txt
+# ── Core (needed by both versions + the test harness) ─────────────────────────
+pandas          # Excel load (common/loader.py)
+openpyxl        # xlsx engine for pandas.read_excel + lookup_log writes
+rapidfuzz       # fuzzy text matching (common/matcher.py)
+tabulate        # result table (common/output.py)
 
-pandas
-openpyxl          # Excel read support for pandas
-rapidfuzz
+# ── V2 only ───────────────────────────────────────────────────────────────────
+geopy           # geodesic distance (v2/geopy_distance.py)
+googlemaps      # geocoding (v2/geopy_distance.py)
 
-# AI provider — install only the one you need (set AI_PROVIDER in config.py)
-anthropic          # pip install anthropic
-# openai           # pip install openai
-# google-generativeai  # pip install google-generativeai
+# ── AI providers (install only the one AI_PROVIDER is set to) ─────────────────
+anthropic       # default: AI_PROVIDER = "anthropic"
+# openai                 # if AI_PROVIDER = "openai"
+# google-generativeai    # if AI_PROVIDER = "gemini"

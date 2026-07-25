@@ -1,144 +1,20 @@
 """
-GeoSense — ai_engine.py
-------------------------
-AI client initialisation, call wrapper, and all AI reasoning functions.
-Supports Anthropic, OpenAI, and Gemini through a unified interface.
+GeoSense — v1/ai_engine.py
+---------------------------
+V1's AI reasoning: PS ranking and district inference. The client plumbing
+(init_ai_client, LazyAgent, call_ai) is shared and lives in common/ai_client.py.
 
 The AI is used for reasoning only — it cannot invent Police Station or
 District names. All final answers are validated against the Excel.
 """
 
-import os
 import re
-import sys
 import json
 
-from config import AI_PROVIDER, AI_MODEL, TOP_N, COL_DISTRICT, COL_PS
-from matcher import find_district_in_excel
+from common.config import TOP_N, COL_DISTRICT, COL_PS
+from common.matcher import find_district_in_excel
+from common.ai_client import call_ai
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CLIENT SETUP
-# ─────────────────────────────────────────────────────────────────────────────
-
-def initiateAgent():
-    """
-    Return the appropriate client object for the configured AI_PROVIDER.
-    Reads the API key from environment variables.
-    Exits with a clear error message if the key is missing or the package
-    is not installed.
-    """
-    if AI_PROVIDER == "anthropic":
-        try:
-            import anthropic
-        except ImportError:
-            print("[ERROR] anthropic package not installed.")
-            print("        Run: pip install anthropic")
-            sys.exit(1)
-        key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not key:
-            print("[ERROR] ANTHROPIC_API_KEY not set.")
-            print("        Run: export ANTHROPIC_API_KEY=sk-ant-...")
-            sys.exit(1)
-        return anthropic.Anthropic(api_key=key)
-
-    elif AI_PROVIDER == "openai":
-        try:
-            from openai import OpenAI
-        except ImportError:
-            print("[ERROR] openai package not installed.")
-            print("        Run: pip install openai")
-            sys.exit(1)
-        key = os.environ.get("OPENAI_API_KEY", "")
-        if not key:
-            print("[ERROR] OPENAI_API_KEY not set.")
-            print("        Run: export OPENAI_API_KEY=sk-...")
-            sys.exit(1)
-        return OpenAI(api_key=key)
-
-    elif AI_PROVIDER == "gemini":
-        try:
-            import google.generativeai as genai
-        except ImportError:
-            print("[ERROR] google-generativeai package not installed.")
-            print("        Run: pip install google-generativeai")
-            sys.exit(1)
-        key = os.environ.get("GOOGLE_API_KEY", "")
-        if not key:
-            print("[ERROR] GOOGLE_API_KEY not set.")
-            print("        Run: export GOOGLE_API_KEY=AI...")
-            sys.exit(1)
-        genai.configure(api_key=key)
-        return genai.GenerativeModel(AI_MODEL)
-
-    else:
-        print(f"[ERROR] Unknown AI_PROVIDER: '{AI_PROVIDER}'")
-        print("        Choose from: 'anthropic', 'openai', 'gemini'")
-        sys.exit(1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# LAZY CLIENT
-# ─────────────────────────────────────────────────────────────────────────────
-
-class LazyAgent:
-    """
-    Defers AI client creation until an AI call is actually needed.
-
-    Fuzzy-only lookups (Case 1 — known PS, and Case 3a — address names a PS)
-    never touch the AI, so they must run with NO API key and NO cost. By passing
-    a LazyAgent around instead of a live client, initiateAgent() — which exits
-    when the key is missing — is only invoked the moment an AI path is reached
-    (Case 2/3b ranking with many candidates, or Case 3c reasoning).
-    """
-    def __init__(self):
-        self._client = None
-
-    def resolve(self):
-        if self._client is None:
-            self._client = initiateAgent()
-        return self._client
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CALL WRAPPER
-# ─────────────────────────────────────────────────────────────────────────────
-
-def invokeAgent(prompt, client):
-    """
-    Send a prompt to the AI and return the response text.
-    Unified interface for Anthropic, OpenAI, and Gemini.
-    Raises an exception on failure — callers handle it.
-
-    Accepts either a live client or a LazyAgent (resolved on first use here).
-    """
-    if isinstance(client, LazyAgent):
-        client = client.resolve()
-
-    if AI_PROVIDER == "anthropic":
-        resp = client.messages.create(
-            model=AI_MODEL,
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return resp.content[0].text.strip()
-
-    elif AI_PROVIDER == "openai":
-        resp = client.chat.completions.create(
-            model=AI_MODEL,
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return resp.choices[0].message.content.strip()
-
-    elif AI_PROVIDER == "gemini":
-        resp = client.generate_content(prompt)
-        return resp.text.strip()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# AI REASONING FUNCTIONS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def rankingAgent(address, district, ps_candidates, client):
     """
@@ -186,7 +62,7 @@ Return ONLY a JSON array (no explanation):
 ]"""
 
     try:
-        raw   = invokeAgent(prompt, client)
+        raw   = call_ai(prompt, client)
         match = re.search(r'\[.*?\]', raw, re.DOTALL)
         if match:
             items   = json.loads(match.group())
@@ -258,7 +134,7 @@ or
     inferred_districts = []
 
     try:
-        raw   = invokeAgent(prompt_step1, client)
+        raw   = call_ai(prompt_step1, client)
         match = re.search(r'\{.*\}', raw, re.DOTALL)
 
         if match:

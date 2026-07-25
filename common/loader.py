@@ -1,7 +1,8 @@
 """
-GeoSense — loader.py
----------------------
+GeoSense — common/loader.py  (shared)
+--------------------------------------
 Reads the Excel file and returns a clean, standardised DataFrame.
+Shared by v1 and v2 — behaviour is identical in both.
 """
 
 import os
@@ -9,7 +10,7 @@ import sys
 
 import pandas as pd
 
-from config import SHEET_NAME, COL_DISTRICT, COL_PS
+from common.config import SHEET_NAME, COL_DISTRICT, COL_PS
 
 
 def load_excel(file_path):
@@ -21,9 +22,9 @@ def load_excel(file_path):
       - Column names stripped and uppercased
       - DISTRICT and POLICE STATION values stripped, uppercased, nulls dropped
     """
-    if not os.path.exists(file_path):
+    if not os.path.exists(str(file_path)):
         print(f"\n[ERROR] File not found: {file_path}")
-        print(f"        Set EXCEL_FILE in config.py, or pass --excel flag.\n")
+        print("        Set EXCEL_FILE in common/config.py, or pass --excel flag.\n")
         sys.exit(1)
 
     try:

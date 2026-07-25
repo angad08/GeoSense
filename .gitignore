@@ -1,9 +1,93 @@
-# Python cache
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
-# Local Claude Code settings (machine-specific)
-.claude/
+# C extensions
+*.so
 
-# Source data / lookup log workbook — supply your own, never commit (may contain PII)
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+.env
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# API Keys and secrets
+.env.local
+.env.*.local
+secrets/
+*.pem
+*.key
+
+# Project-specific
+# Source data / lookup log workbook — supply your own, never commit.
+# The workbook holds real applicant addresses in its LookupResults sheet, and
+# v2 writes station coordinates back into it, so it is working data, not source.
 data/*.xlsx
+# Excel lock files, present while the workbook is open
+~$*
+lookup_results_*.xlsx
+*.log
+.cache/
+data/temp/
+results/
+
+# Local tooling / scratch — not part of the project
+.claude/
+_backup_pre_restructure/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Internal migration note — not part of the published project
+RESTRUCTURE_SUMMARY.md

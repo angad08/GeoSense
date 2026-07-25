@@ -1,7 +1,8 @@
 """
-GeoSense — lookup_log.py
--------------------------
+GeoSense — common/lookup_log.py  (shared)
+------------------------------------------
 Appends completed lookups to the LookupResults sheet inside the source workbook.
+Shared by v1 and v2 — the log format and rules are identical in both.
 
 Rules (feature spec):
   - Every completed lookup is logged — whether the user gave a Police Station,
@@ -24,8 +25,8 @@ Columns: ADDRESS | RESULT LOOKUP | RESULT MATCH
 
 import openpyxl
 
-from config import EXCEL_FILE, LOG_SHEET_NAME, LOG_OLD_SHEET, LOG_COLS
-from output import SURETY_LABELS
+from common.config import EXCEL_FILE, LOG_SHEET_NAME, LOG_OLD_SHEET, LOG_COLS
+from common.output import SURETY_LABELS
 
 
 # Engine case → RESULT LOOKUP wording
