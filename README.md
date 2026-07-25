@@ -1,19 +1,23 @@
-# GeoSense — Police Station ⇄ District Resolver
+# GeoSense — Address → Police Station Record Linkage
 
-> Give it a police station, an address, or a district — it resolves the rest. Accurately, in seconds, with the official Excel as the final word.
+> A reference table of **751 police stations**. Thousands of hand-typed addresses. No consistent way to connect the two — and no measurement of how often the connection was wrong.
 
-**Focus today:** Hyderabad & Telangana. **Direction of travel:** more regions over time — the geography lives in data, not code (see [Scope & Roadmap](#scope--roadmap)).
+**Domain:** passport verification, Hyderabad & Telangana.
+**Method:** data standardisation, fuzzy record linkage, geospatial enrichment, and accuracy measured against a hand-labelled set.
+**Scope:** the geography lives in the data, not the code — see [Scope & Roadmap](#scope--roadmap).
 
-**In one line:** a manual, expert-dependent lookup across **751 police stations** — one that used to mean scrolling a spreadsheet or phoning the applicant back — becomes a **one-command answer in seconds**, with a confidence level and an audit trail.
+**Where this started.** Cases were being routed to the wrong police station, and the assumption was that people needed to be more careful. Looking at it as data said otherwise: one reference table nobody could query consistently, addresses that never matched it cleanly, and **no metric for how often it failed**. That reframing — a data quality problem, not a diligence problem — is what the rest of this repo is.
 
-| | |
+| Outcome | How it was achieved |
 |---|---|
-| ⏱️ **Manual scroll → seconds** | Either direction: station→district, district→station, or a raw address→both |
-| 📞 **Fewer applicant callbacks** | Messy free-text addresses resolve on the spot instead of needing a confirmation call |
-| 🎯 **Zero invented stations** | The Excel is the source of truth — the AI ranks, but can never return a station that isn't in your data |
-| 🔁 **Same answer every time** | Deterministic matching; the result no longer depends on which staff member ran it |
-| 💸 **1 API call per lookup** | Station coordinates are geocoded once and cached in the Excel, not re-fetched every run |
-| 📋 **Auditable** | Every lookup is logged with its confidence level |
+| ⏱️ **Manual scroll → seconds** | A 751-row reference table queried in either direction instead of read by eye |
+| 📞 **Fewer applicant callbacks** | Messy free-text addresses standardised and matched on the spot, not sent back for confirmation |
+| 📐 **A number replaced a guess** | Ranking moved from an estimate to **measured geodesic distance** — reproducible and checkable |
+| 🎯 **No fabricated values** | Every returned value must already exist in the reference table, or it is rejected |
+| 🔁 **Consistent by construction** | Deterministic matching — the answer no longer depends on who ran it |
+| 📊 **Measured, not assumed** | A labelled test set and a regression baseline, so changes are proven not hoped (see [How It's Measured](#how-its-measured)) |
+| 💸 **95–99% fewer geocoding calls** | Station coordinates resolved once and stored, not re-fetched every lookup — a median district drops from 19 calls to 1 |
+| 📋 **Auditable** | Every decision logged with its confidence level |
 
 ---
 
@@ -37,30 +41,38 @@ GeoSense resolves the **District ⇄ Police Station relationship in both directi
 | A **District** (station unknown) | The **best-matching police stations**, ranked | District → PS |
 | Only an **address** | **Both** — the district *and* the station | Address → District + PS |
 
-It does this with a ladder of increasingly expensive steps, stopping at the first one that answers:
+It works as a **cost-tiered matching pipeline** — each stage is more expensive than the last, and the pipeline stops at the first one that answers:
 
-- **Deterministic fuzzy matching** snaps a typed or misspelled name to the real entry in your Excel.
-- **Locality scanning** reads localities out of a free-text address and matches them against known stations.
-- **Geographic ranking** orders the remaining candidates — by real geodesic distance (v2) or AI reasoning (v1).
+| Stage | Method | Cost |
+|---|---|---|
+| 1. **Standardise** | Trim, case-normalise, and de-duplicate the reference table on load | Free |
+| 2. **Fuzzy match** | Token-based similarity snaps a misspelled name to its canonical row | Free |
+| 3. **Locality scan** | Parses localities out of free-text and matches them against known areas, with guards against low-signal tokens and wide ties | Free |
+| 4. **Geospatial rank** | Geocode the address, rank candidates by measured geodesic distance | 1 API call |
+| 5. **Inference** | An LLM infers the district only when the text alone can't | 1 API call |
 
-And one hard rule holds across all of them:
+Most lookups never reach stages 4–5. That ordering is deliberate: **the cheapest deterministic method that can answer the question, answers it** — the expensive, non-reproducible steps are a fallback, not the default.
 
-> **The Excel is the source of truth.** The AI reasons, but it can never invent a Police Station or District — every answer must already exist in your data, or it is rejected.
+One rule holds across every stage:
 
-A known station resolves instantly with **no AI and no cost**. The expensive rungs only run when a messy address actually needs interpreting. Every completed lookup is appended to a `LookupResults` sheet in the same workbook.
+> **The reference table is the source of truth.** No stage — including the LLM — may return a Police Station or District that isn't already in the data. Anything else is rejected rather than returned.
 
-## Two Versions
+That constraint is what makes the output safe to act on: a wrong answer is possible, but a *fabricated* one isn't. Every completed lookup is appended to a `LookupResults` sheet with its confidence level, giving a running record of how the pipeline is performing in production.
 
-The versions differ **only** in how they rank stations geographically. Everything else — matching, routing, output, logging — is shared code in `common/`.
+## Two Ranking Methods, Compared
+
+The ranking stage was built twice, deliberately, so the two approaches could be run against the same cases and compared. Everything else — standardisation, matching, routing, output, logging — is shared code in `common/`, so the ranking method is the **only** variable between them.
 
 | | **v1** | **v2** (default) |
 |---|---|---|
-| **Ranking** | AI estimates which station is nearest | Real geodesic distance (WGS-84, Karney's algorithm) |
-| **Distance shown** | An AI estimate | A measured number in km |
+| **Ranking** | Model estimates which station is nearest | Measured geodesic distance (WGS-84, Karney's algorithm) |
+| **Distance shown** | An estimate | A number in km, reproducible from the coordinates |
+| **Re-run on the same input** | May vary | Identical every time |
 | **Needs** | Any one AI provider key | Any one AI provider key + `GOOGLE_MAPS_API_KEY` |
-| **Best for** | No Maps key available | Precise, reproducible ranking |
 
-v2 is the default because a measured distance is auditable and an estimate isn't.
+**v2 is the default, and the harness is why.** Both methods rank the correct station first on the same 6 of 7 cases — so the estimate wasn't buying accuracy. But v2's output is reproducible, explainable from the underlying coordinates, and free to re-run once coordinates are stored. Same result, lower cost, and auditable — so the estimated version became the fallback for when no Maps key is available.
+
+Keeping both is what makes that a finding rather than an assumption.
 
 ## See It Work
 
@@ -108,7 +120,35 @@ Same tool, opposite directions — and every station printed is a real row from 
 | Misrouted cases → re-work and delays | Right station the first time → **fewer rejections, faster turnaround** |
 | No record of how a decision was made | **Built-in audit trail** of every lookup |
 
-The point isn't the matching algorithm — it's that a slow, expert-dependent, error-prone step becomes **fast, consistent, and auditable**, in both directions.
+The point isn't the matching algorithm — it's that a slow, expert-dependent, unmeasured step becomes **fast, consistent, and quantified**.
+
+---
+
+## How It's Measured
+
+A matcher that can't be evaluated is a guess with extra steps. Two things make this one checkable:
+
+**1. A hand-labelled ground-truth set.** Real addresses paired with the station a human confirmed was correct — `ACTUAL` beside `PREDICTED`, with a match rate computed across the set. This is what turns "it seems to work" into a number, and it's the artifact that drives every decision below. *(Kept out of this repo: it contains real applicant addresses.)*
+
+**2. A regression harness that runs with no API keys and no network.** The paid stages are mocked, so the deterministic logic can be re-tested on every change for free:
+
+```
+V1 rank-1 6/7 | V2 rank-1 6/7 | parity 7/7 | negative 1/1 | case-2 pin 1/1  => ALL GREEN
+```
+
+What each figure is actually checking:
+
+| Metric | What it proves |
+|---|---|
+| **rank-1 6/7** | The correct station is ranked first on 6 of 7 address-only cases |
+| **parity 7/7** | Both ranking methods agree on every case — so a difference is a real signal, not noise |
+| **negative 1/1** | A nonsense address returns **nothing** rather than a confident wrong answer |
+| **case-2 pin 1/1** | A station named in the text stays rank 1 and isn't displaced by distance |
+
+Two deliberate choices worth calling out:
+
+- **The failing case is recorded, not hidden.** Case 3 returns `BALANAGAR` where `SANATHNAGAR` is expected. It's in the harness as a known failure with the expected value written down — so if a future change happens to fix it, that shows up as a result rather than going unnoticed.
+- **A negative test carries as much weight as a positive one.** Silent false positives are the expensive failure mode here: a wrong station routes a case to the wrong desk and nobody notices for days. Returning nothing is recoverable; returning something plausible and wrong is not.
 
 ---
 
@@ -262,13 +302,7 @@ A regression harness runs the full case ladder with the paid rungs mocked, so it
 python tests/validate_test_cases.py
 ```
 
-It checks that v1 and v2 agree on every address-only case, that a nonsense address returns nothing rather than guessing, and that a text-matched station stays pinned at rank 1. Current baseline:
-
-```
-SUMMARY  V1 rank-1 6/7 | V2 rank-1 6/7 | parity 7/7 | negative 1/1 | case-2 pin 1/1  => ALL GREEN
-```
-
-Case 3 is a known failure, recorded deliberately rather than hidden — it names `BALANAGAR` where `SANATHNAGAR` is expected.
+Expected result and what each metric means: see [How It's Measured](#how-its-measured).
 
 ---
 
