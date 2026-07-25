@@ -4,6 +4,17 @@
 
 **Focus today:** Hyderabad & Telangana. **Direction of travel:** more regions over time — the geography lives in data, not code (see [Scope & Roadmap](#scope--roadmap)).
 
+**In one line:** a manual, expert-dependent lookup across **751 police stations** — one that used to mean scrolling a spreadsheet or phoning the applicant back — becomes a **one-command answer in seconds**, with a confidence level and an audit trail.
+
+| | |
+|---|---|
+| ⏱️ **Manual scroll → seconds** | Either direction: station→district, district→station, or a raw address→both |
+| 📞 **Fewer applicant callbacks** | Messy free-text addresses resolve on the spot instead of needing a confirmation call |
+| 🎯 **Zero invented stations** | The Excel is the source of truth — the AI ranks, but can never return a station that isn't in your data |
+| 🔁 **Same answer every time** | Deterministic matching; the result no longer depends on which staff member ran it |
+| 💸 **1 API call per lookup** | Station coordinates are geocoded once and cached in the Excel, not re-fetched every run |
+| 📋 **Auditable** | Every lookup is logged with its confidence level |
+
 ---
 
 ## The Problem
@@ -46,7 +57,7 @@ The versions differ **only** in how they rank stations geographically. Everythin
 |---|---|---|
 | **Ranking** | AI estimates which station is nearest | Real geodesic distance (WGS-84, Karney's algorithm) |
 | **Distance shown** | An AI estimate | A measured number in km |
-| **Needs** | `ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` + `GOOGLE_MAPS_API_KEY` |
+| **Needs** | Any one AI provider key | Any one AI provider key + `GOOGLE_MAPS_API_KEY` |
 | **Best for** | No Maps key available | Precise, reproducible ranking |
 
 v2 is the default because a measured distance is auditable and an estimate isn't.
@@ -103,19 +114,31 @@ The point isn't the matching algorithm — it's that a slow, expert-dependent, e
 pip install -r requirements.txt
 ```
 
-Install only the AI provider you plan to run:
+**2. Choose an AI provider**
 
-```bash
-pip install anthropic            # Anthropic (default)
-pip install openai               # OpenAI
-pip install google-generativeai  # Gemini
+GeoSense is **provider-agnostic** — the AI rungs run behind one interface in `common/ai_client.py`, so nothing in the matching, routing, or ranking logic is tied to a vendor. Pick whichever provider you already have access to; all three are equally supported.
+
+Set `AI_PROVIDER` in `common/config.py`, install that provider's package, and set its key. The three go together — each provider serves its own models, so the model is selected automatically to match:
+
+| `AI_PROVIDER` | Install | Environment variable | Model used |
+|---|---|---|---|
+| `"anthropic"` | `pip install anthropic` | `ANTHROPIC_API_KEY` | `AI_MODEL["anthropic"]` |
+| `"openai"` | `pip install openai` | `OPENAI_API_KEY` | `AI_MODEL["openai"]` |
+| `"gemini"` | `pip install google-generativeai` | `GOOGLE_API_KEY` | `AI_MODEL["gemini"]` |
+
+To switch providers, change one line in `common/config.py`:
+
+```python
+AI_PROVIDER = "anthropic"   # "anthropic" | "openai" | "gemini"
 ```
 
-**2. Set your API keys**
+The model for each provider is set in the `AI_MODEL` map in the same file — edit it there to pin a different model from that provider.
+
+**3. Set your keys**
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...    # AI reasoning rungs
-export GOOGLE_MAPS_API_KEY=AIza...     # v2 only — geocoding
+export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY / GOOGLE_API_KEY
+export GOOGLE_MAPS_API_KEY=AIza...    # v2 only — geocoding, unrelated to the AI provider
 ```
 
 On Windows PowerShell:
@@ -125,9 +148,11 @@ $env:ANTHROPIC_API_KEY = "sk-ant-..."
 $env:GOOGLE_MAPS_API_KEY = "AIza..."
 ```
 
-> Station-only lookups (`--ps`) resolve without any AI or Maps call and need **no key**.
+> `GOOGLE_MAPS_API_KEY` is for geocoding and is **independent of your AI provider choice** — you can run Gemini for reasoning and Google Maps for distance, or OpenAI for reasoning and Google Maps for distance. They are separate services.
+>
+> Station-only lookups (`--ps`) resolve without any AI or Maps call and need **no key at all**.
 
-**3. Add your Excel file**
+**4. Add your Excel file**
 
 The data file is **not included in this repo** — it is working data and may contain applicant addresses in its log sheet. Supply your own and place it at either path:
 
@@ -137,12 +162,6 @@ data/POLICE_STATION.xlsx             # fallback
 ```
 
 It must contain a sheet named `PoliceStation` with `DISTRICT` and `POLICE STATION` columns. `common/config.py` resolves the path automatically — no editing needed (override with `--excel`).
-
-**4. Choose your AI provider** in `common/config.py`:
-
-```python
-AI_PROVIDER = "anthropic"   # "anthropic" | "openai" | "gemini"
-```
 
 ---
 
@@ -290,7 +309,8 @@ GeoSense/
 | `LOCALITY_CUTOFF` | `86` | Stricter cutoff for address-locality scans |
 | `TOP_N` | `3` | Number of results to return |
 | `DISTANCE_WARN_KM` | `30` | v2: flag if the nearest station is farther than this |
-| `AI_PROVIDER` | `anthropic` | `anthropic` \| `openai` \| `gemini` |
+| `AI_PROVIDER` | `anthropic` | `anthropic` \| `openai` \| `gemini` — any one is fully supported |
+| `AI_MODEL` | *(per provider)* | Model map keyed by provider; edit to pin a different model |
 
 ---
 
@@ -300,6 +320,8 @@ GeoSense/
 |---|---|
 | `[ERROR] File not found` | Put your Excel at `data/sample_police_stations.xlsx` |
 | `Missing GOOGLE_MAPS_API_KEY` | Set it, or run `python main.py v1` instead |
+| `[ERROR] <package> not installed` | Install the package for your chosen `AI_PROVIDER` |
+| `[ERROR] <PROVIDER>_API_KEY not set` | Set the key matching `AI_PROVIDER` in `common/config.py` |
 | `[WARN] Could not save coordinates` | The workbook is open in Excel — close it and re-run |
 | `No module named geopy` | `pip install -r requirements.txt` |
 | First lookup in a district is slow | Expected — it is geocoding that district's stations once |
