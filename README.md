@@ -69,26 +69,32 @@ v2 is the default because a measured distance is auditable and an estimate isn't
 ```text
 $ python main.py --ps "Gachibowli"
 
-----------------------------------------------------------
- Sr.No  Police Station   District    Surety       Distance
-     1  GACHIBOWLI       CYBERABAD   Guaranteed   N/A
-----------------------------------------------------------
+--------------------------------------------------
+  #  Police Station    District              Surety      Distance
+---  ----------------  --------------------  ----------  ----------
+  1  GACHIBOWLI        CYBERABAD-RANGAREDDY  Guaranteed  N/A
+--------------------------------------------------
+
+  [LOG] Saved to 'LookupResults': DISTRICT | Guaranteed
 ```
 
-**Only a messy address** → infers the district *and* ranks the stations by real distance:
+**Only a messy address** → the locality scan reads the station area straight out of the text — still no API call:
 
 ```text
 $ python main.py --address "6-31-1, Flat 101, Akhila Enclave, Old Bowenpally, Secunderabad, 500011"
 
-----------------------------------------------------------
- Sr.No  Police Station   District       Surety        Distance
-     1  OLD BOWENPALLY   SECUNDERABAD   Very Likely   ~1.8 km
-     2  BOWENPALLY       SECUNDERABAD   Likely        ~3.2 km
-     3  MAHANKALI        SECUNDERABAD   Possible      ~4.9 km
-----------------------------------------------------------
+--------------------------------------------------
+  #  Police Station    District              Surety       Distance
+---  ----------------  --------------------  -----------  ----------
+  1  BOWENPALLY        MALKAJGIRI-HYDERABAD  Very Likely  N/A
+--------------------------------------------------
+
+  [LOG] Saved to 'LookupResults': DISTRICT + POLICE STATION | Very Likely
 ```
 
-Same tool, opposite directions — and every station printed is a real row from your Excel, never invented.
+When the address *doesn't* name a station area, the ladder continues: the district is matched or AI-inferred, and stations are ranked by **measured geodesic distance** (`~4.2 km`-style figures in the Distance column, one Geocoding API call).
+
+Same tool, opposite directions — and every station printed is a real row from your Excel, never invented. (Outputs above are actual runs against the Telangana dataset.)
 
 ## The Impact — Why It Matters
 
@@ -147,6 +153,8 @@ On Windows PowerShell:
 $env:ANTHROPIC_API_KEY = "sk-ant-..."
 $env:GOOGLE_MAPS_API_KEY = "AIza..."
 ```
+
+Or put the same keys in a `.env` file at the project root — it is loaded automatically (and `.gitignore` already excludes it).
 
 > `GOOGLE_MAPS_API_KEY` is for geocoding and is **independent of your AI provider choice** — you can run Gemini for reasoning and Google Maps for distance, or OpenAI for reasoning and Google Maps for distance. They are separate services.
 >

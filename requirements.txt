@@ -3,6 +3,7 @@ pandas          # Excel load (common/loader.py)
 openpyxl        # xlsx engine for pandas.read_excel + lookup_log writes
 rapidfuzz       # fuzzy text matching (common/matcher.py)
 tabulate        # result table (common/output.py)
+python-dotenv   # optional: auto-loads a .env file at startup (common/api_keys.py)
 
 # ── V2 only ───────────────────────────────────────────────────────────────────
 geopy           # geodesic distance (v2/geopy_distance.py)

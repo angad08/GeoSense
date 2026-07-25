@@ -8,58 +8,76 @@
 pip install -r requirements.txt
 ```
 
-## Set API Keys
+## Add your Excel file
 
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."          # Required
-export GOOGLE_MAPS_API_KEY="AIza..."           # Only for v2
+The station data is not included in this repo. Place your workbook at:
+
+```
+data/sample_police_stations.xlsx
 ```
 
+It needs a `PoliceStation` sheet with `DISTRICT` and `POLICE STATION` columns.
+
+## Try it — no API keys needed
+
+Station and locality lookups resolve entirely from the Excel:
+
+```bash
+python main.py --ps "Gachibowli"
+```
+
+```text
+--------------------------------------------------
+  #  Police Station    District              Surety      Distance
+---  ----------------  --------------------  ----------  ----------
+  1  GACHIBOWLI        CYBERABAD-RANGAREDDY  Guaranteed  N/A
+--------------------------------------------------
+```
+
+The regression tests also need no keys:
+
+```bash
+python -m tests.validate_test_cases
+```
+
+## Set API keys (for the paid rungs)
+
+Only needed when a lookup actually reaches geocoding or AI — messy addresses
+that the text scan can't resolve:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."          # AI district inference
+export GOOGLE_MAPS_API_KEY="AIza..."           # v2 distance ranking
+```
+
+Or put the same lines in a `.env` file at the project root — it's loaded
+automatically.
+
 > Don't have keys? Get them:
-> - Anthropic: https://console.anthropic.com/keys
-> - Google Maps: https://console.cloud.google.com/ → Geocoding API
+> - Anthropic: https://console.anthropic.com/
+> - Google Maps: https://console.cloud.google.com/ → enable **Geocoding API**
 
 ## Run
 
 ```bash
-# Interactive mode (asks for input)
-python main.py
-
-# Single lookup
-python main.py --address "Madhapur" --district "Rangareddy"
-
-# Use v1 (AI-based, slower but smarter)
-python main.py v1
-
-# Run tests (no API keys needed)
-python -m tests.validate_test_cases
-```
-
-## What You'll See
-
-```
-GeoSense v2 — Geodesic Distance Ranking
-Enter address: Madhapur
-Enter district [optional]: Rangareddy
-
-Top 3 Police Stations:
-┌──────────────────┬──────────────┬──────────┬─────────┐
-│ Station          │ District     │ Distance │ Surety  │
-├──────────────────┼──────────────┼──────────┼─────────┤
-│ Madhapur PS      │ Rangareddy   │ 0.2 km   │ High    │
-│ Gachibowli PS    │ Rangareddy   │ 4.1 km   │ High    │
-│ Secunderabad PS  │ Rangareddy   │ 12.3 km  │ Medium  │
-└──────────────────┴──────────────┴──────────┴─────────┘
+python main.py                                  # v2 (default), interactive
+python main.py --address "Madhapur Hyderabad"   # address → district + station
+python main.py v1                               # v1 (AI-estimated ranking)
 ```
 
 ## v1 vs v2
 
-| Feature | v1 (AI) | v2 (Distance) |
+Both share the same matching and routing — they differ only in how stations
+are ranked geographically:
+
+| | v1 | v2 (default) |
 |---------|---------|---------------|
-| **Speed** | 2-3 sec | <500ms |
-| **Accuracy** | Good | Better |
-| **Cost** | Higher | Lower |
-| **Run** | `python main.py v1` | `python main.py` |
+| **Ranking** | AI estimates distances | Real geodesic distance (WGS-84) |
+| **Distance shown** | An AI guess | A measured number in km |
+| **Needs** | AI provider key | AI provider key + Google Maps key |
+
+v2 is the default because a measured distance is auditable and an estimate
+isn't.
 
 ## Need Help?
 

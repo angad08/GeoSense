@@ -16,23 +16,20 @@ source venv/bin/activate          # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Set test environment variables (no real API calls)
-export ANTHROPIC_API_KEY="test-key"
-export GOOGLE_MAPS_API_KEY="test-key"
+# No API keys needed for development — the test suite mocks all paid rungs,
+# and station/locality lookups never call an API. Set real keys (or a .env
+# file) only when you want to exercise the AI or geocoding rungs live.
 ```
 
 ## Running Tests
 
 ```bash
-# Full regression suite (no network calls)
+# Full regression suite — no network calls, no API keys
 python -m tests.validate_test_cases
-
-# Test a specific version
-python -m tests.validate_test_cases --version v2
-
-# With verbose output
-python -m tests.validate_test_cases --verbose
 ```
+
+The suite runs both versions against the same cases and must end `ALL GREEN`
+(test #3 is a recorded known failure — see the README's Testing section).
 
 ## Making Changes
 
@@ -44,7 +41,7 @@ python -m tests.validate_test_cases --verbose
 ### Guidelines
 1. **Import structure**: Each module adds project root to `sys.path` independently — allows running `python v1/app.py` from anywhere
 2. **Config hierarchy**: `v2/config.py` imports and extends `common/config.py` — no duplication
-3. **API keys**: Read once in `common/api_keys.py` — always check if key exists before calling APIs
+3. **API keys**: All key access goes through `common/api_keys.py` (env vars, plus optional `.env`). Keys are validated lazily — at the first real API call, never at import — so keyless rungs keep working with no keys set
 4. **Test first**: Add test cases before implementing features
 
 ### Example: Adding a new ranking factor

@@ -7,15 +7,21 @@ GeoSense is a two-tier system: a **shared core** (`common/`) that handles data l
 ## Core Layers
 
 ### 1. Data Layer (`common/loader.py`)
-- Loads Excel file into a clean pandas DataFrame
-- Normalizes station names, districts, localities
-- Handles missing/corrupted values gracefully
-- **Output**: `DataFrame(columns=['station', 'district', 'locality', 'coords', ...])`
+- Loads the `PoliceStation` sheet into a clean pandas DataFrame
+- Strips and uppercases values, drops null rows
+- **Output**: `DataFrame(columns=['DISTRICT', 'POLICE STATION'])`
+- Station coordinates (`LAT`/`LNG` columns) are read separately by
+  `v2/geopy_distance.py` with openpyxl, so writes never disturb other sheets
 
 ### 2. Text Matching Layer (`common/matcher.py`)
-- **Fuzzy matching**: Uses RapidFuzz to find station name matches (threshold: 80%)
-- **Locality scanning**: Maps address text to known localities, returns matching stations
-- **Returns**: `(matched_stations, confidence_score)` or empty if no match
+- **Fuzzy matching** (lenient): RapidFuzz scoring for names the user *typed*
+  (threshold: `FUZZY_CUTOFF = 80`)
+- **Locality scanning** (strict): reads locality names out of a free-text
+  address and matches them against known stations and districts. Strict
+  scoring rules stop junk tokens (door numbers, generic words like "NAGAR")
+  from ever producing a false match — a wrong answer is worse than no answer
+- **Returns**: ranked matches with scores, or empty so the query falls
+  through to the next rung
 
 ### 3. Ranking Engines (`v1/engine.py`, `v2/engine.py`)
 Execute in order:
@@ -27,12 +33,14 @@ Execute in order:
 
 ### 4. Output Layer (`common/output.py`)
 - Formats results as a table (tabulate)
-- Attaches confidence labels: High/Medium/Low
-- Adds distance warnings if v2 distance > threshold
+- Maps internal confidence to plain-English surety labels:
+  Guaranteed / Very Likely / Likely / Possible / Unknown
+- Prints the advisory warning the engine attached (v2 Case 2 distance check)
 
 ### 5. Logging Layer (`common/lookup_log.py`)
-- Appends each lookup to `LookupResults` sheet in Excel
-- Records: `(address, district, matched_station, confidence, timestamp)`
+- Appends each lookup to the `LookupResults` sheet in the same workbook
+- Columns: `ADDRESS | RESULT LOOKUP | RESULT MATCH` — the logged wording
+  always matches what was displayed to the user
 
 ## Ranking Engines in Detail
 
@@ -56,50 +64,51 @@ Step 3: Format & Log
   └─ Append to LookupResults sheet
 ```
 
-**AI Prompt Pattern**:
-```
-You are a geography expert. For a person at "<address>" needing the 
-closest police station in "<district>", rank these stations by distance:
-[station list]
-
-Return JSON: {"stations": [{"name": "...", "distance_km": N, "reason": "..."}]}
-```
+**The guarantee that matters:** the AI is constrained to choose only from the
+station list supplied from the Excel, and every name it returns is validated
+against the Excel again — anything not in your data is discarded. The result:
+**zero invented stations**, ever.
 
 **Tradeoff**: 
-- ✓ Understands context ("near the mall" → searches that area)
+- ✓ Works with no Google Maps key
 - ✓ Infers missing districts from address text
-- ✗ 1-3 second API latency per lookup
-- ✗ Costs API tokens
+- ✗ Distances are estimates, not measurements
+- ✗ API latency and token cost on every ranked lookup
 
-### v2: Geodesic Distance + AI Fallback
+### v2: Geodesic Distance (AI only as last resort)
 
 ```
 Input: (address, district, optional) → common/loader loads Excel
 
 Step 1: Text Match (same as v1)
-  └─ Return if fuzzy or locality match found
+  └─ Return if fuzzy or locality match found — no API call at all
 
-Step 2: Geocoding (v2/geopy_distance.py)
-  ├─ Google Maps API: Convert address → (lat, lon)
-  ├─ Calculate WGS-84 geodesic distance to each station
-  └─ Rank by distance (ascending)
+Step 2: AI District Inference (v2/ai_engine.py) — ONLY if text matching failed
+  └─ AI infers the district from the address text (Excel list only,
+     no invented names) — this is v2's single AI job
 
-Step 3: AI Fallback (v2/ai_engine.py)
-  └─ If address doesn't geocode → call AI to infer district only
-  └─ Return stations in that district (no distance ranking)
+Step 3: Distance Ranking (v2/geopy_distance.py)
+  ├─ Station coords read from the Excel's LAT/LNG columns (geocoded once,
+  │  on demand, and written back — no rebuild step)
+  ├─ Google Maps Geocoding API: input address → (lat, lng) — the 1 live call
+  ├─ WGS-84 geodesic distance to each station, rank ascending
+  └─ If the input address will not geocode → the district's stations are
+     returned UNRANKED with low confidence, stated in the method string —
+     never a silent empty result
 
 Step 4: Format & Log
-  └─ Output top 3 with distances
-  └─ Add warning if distance > DISTANCE_WARN_KM (default: 15)
+  └─ Output top 3 with measured distances
+  └─ Advisory warning if the nearest station is farther than
+     DISTANCE_WARN_KM (default: 30) — the stated district may be wrong
   └─ Append to LookupResults sheet
 ```
 
 **Tradeoff**:
-- ✓ <500ms latency (geocoding cache)
-- ✓ Precise real distances (WGS-84)
-- ✓ Lower API cost (geocoding cheaper than ranking)
-- ✗ Requires valid addresses (unrecognized → AI fallback)
-- ✗ Needs Google Maps API key
+- ✓ Precise real distances (WGS-84, Karney's algorithm)
+- ✓ One geocode per station ever; one API call per warm lookup
+- ✓ AI touched only when the Excel text scan can't answer
+- ✗ Needs a Google Maps API key for the distance rung
+- ✗ First lookup in a cold district geocodes that district's stations once
 
 ## Module Dependencies
 
@@ -124,7 +133,7 @@ main.py (version router)
       │       └─ common/ai_client.py
       └─ common/output.py + common/lookup_log.py
 
-common/api_keys.py (read all keys once, before first use)
+common/api_keys.py (env vars + optional .env; validated lazily, at first real use)
 common/config.py (shared settings)
   ↑
 v2/config.py (extends common/config.py with DISTANCE_WARN_KM)
@@ -145,83 +154,88 @@ v2/config.py (extends common/config.py with DISTANCE_WARN_KM)
 - **Rule**: If a setting is only one version uses it, put it in that version's config
 
 ### Why text matching runs before ranking
-- Fuzzy + locality cover ~95% of lookups with zero API cost
-- API calls (AI/geocoding) are fallback for unusual addresses
-- Ranking tier only executes when needed
+- Any lookup the fuzzy or locality rung can answer costs zero API calls
+- API calls (AI/geocoding) are the fallback for addresses the Excel text
+  can't resolve directly
+- Each rung only executes if the one before it could not answer
 
 ### Why logging happens after output
 - Output → confidence labels and warnings already decided
 - Log records what was displayed (audit trail)
 - If output format changes, log format changes in parallel
 
-## Data Flow Example: "Find PS for Madhapur, Rangareddy"
+## Data Flow Examples (real lookups against the Telangana dataset)
 
-### v1 Flow
+### Case 1 — station known (no API call)
 ```
-Input: address="Madhapur", district="Rangareddy"
+Input: --ps "Gachibowli"
     ↓
-Fuzzy Match: "Madhapur" → 95% match with "Madhapur PS" ✓
+Fuzzy Match: exact match (score 100) on GACHIBOWLI ✓
     ↓
-Output: {station: "Madhapur PS", district: "Rangareddy", confidence: "High"}
+Output: GACHIBOWLI | CYBERABAD-RANGAREDDY | Guaranteed
     ↓
-Log: "Madhapur" → "Madhapur PS" (fuzzy)
-```
-
-### v2 Flow
-```
-Input: address="100ft Road near Phoenix Park, Madhapur"
-    ↓
-Fuzzy Match: No 95%+ match ✗
-    ↓
-Locality Scan: "Madhapur" → "Madhapur PS", "Gachibowli PS" ✓
-    ↓
-Output: Top 2 stations by locality match
-    ↓
-Log: Address → Top matches (locality)
+Log: appended to LookupResults
 ```
 
-### v2 with Ranking
+### Case 3a — address names a station area (no API call)
 ```
-Input: address="Near CMH Hospital", district="Rangareddy"
+Input: --address "6-31-1, Akhila Enclave, Old Bowenpally, Secunderabad, 500011"
     ↓
-Fuzzy Match: No match ✗
+Fuzzy Match: not applicable (no station name typed)
     ↓
-Locality Scan: No match ✗
+Locality Scan: token "BOWENPALLY" → BOWENPALLY PS ✓
     ↓
-Geocode: "CMH Hospital, Rangareddy" → (lat=17.xxx, lon=78.xxx)
+Output: BOWENPALLY | MALKAJGIRI-HYDERABAD | Very Likely
     ↓
-Distance Calc: {Madhapur PS: 2.3km, Gachibowli PS: 4.1km, ...}
+Log: appended to LookupResults
+```
+
+### Case 2 — district known, address ranked by distance (1 API call when warm)
+```
+Input: --district "Malkajgiri-Rangareddy" --address "<full address>"
     ↓
-Rank & Output: Top 3 by distance with warnings if >15km
+Fuzzy Match district: MALKAJGIRI-RANGAREDDY (100%)
     ↓
-Log: Address → Top 3 (geodesic)
+Text-first pin: if the address itself names a station in that district,
+                it is pinned at rank 1
+    ↓
+Geocode input address (1 API call) → geodesic distance to each station's
+cached coordinates → rank ascending
+    ↓
+Output: top 3 with measured distances; advisory warning if the nearest
+        station is > DISTANCE_WARN_KM (30 km) away
+    ↓
+Log: appended to LookupResults
 ```
 
 ## Testing Strategy
 
 ### Regression Tests (`tests/validate_test_cases.py`)
-- No network calls (mocked API responses)
-- Covers:
-  - Fuzzy matching edge cases
-  - Locality scanning with special characters
-  - Ranking logic (order of results)
-  - Output formatting
+A 9-check harness that needs **no API keys and makes no network calls** —
+the paid rungs (AI, geocoding) are mocked out:
+- **#1–#7**: real messy addresses, address-only. v1 and v2 must return the
+  same rank-1 station, matching a recorded baseline. (#3 is a deliberately
+  recorded known failure — it names BALANAGAR where SANATHNAGAR is expected.)
+- **#8**: a negative case — an address with no usable signal must return
+  *nothing* rather than a lucky junk-token guess.
+- **#9**: v2's Case-2 text-first pin — a station named in the address text
+  must stay pinned at rank 1 above the distance ranking.
 
 ### Running Tests
 ```bash
 python -m tests.validate_test_cases
 ```
+Expected last line: `... => ALL GREEN`
 
 ## Performance Characteristics
 
-| Operation | Time | Notes |
+| Operation | Cost | Notes |
 |-----------|------|-------|
-| Fuzzy match | <5ms | In-memory, RapidFuzz |
-| Locality scan | <10ms | Pandas string search |
-| Geocoding (v2) | 200-500ms | Google Maps API, cached |
-| AI ranking (v1) | 1-3s | Anthropic API |
-| Full lookup (cached) | <10ms | If text match succeeds |
-| Full lookup (AI/geocode) | 1-3s | First time only |
+| Fuzzy match | Free, in-memory | RapidFuzz over the loaded DataFrame |
+| Locality scan | Free, in-memory | Token extraction + strict scoring |
+| Distance ranking (v2, warm) | 1 geocode API call | Station coords come from the Excel |
+| Distance ranking (v2, cold district) | 1 call per uncached station, once ever | Written back to the Excel |
+| AI rung | 1 model call | Only when text matching can't answer |
 
 ## Future Extensions
 
@@ -230,10 +244,10 @@ python -m tests.validate_test_cases
 - Rank without AI/geocoding API calls
 - Zero latency, minimal cost
 
-### Caching Layer
-- Redis/local cache for geocoding results
-- 99% hit rate for repeat addresses
-- Reduces API calls by 10x
+### Input-Address Caching
+- Station coordinates are already cached in the Excel (done)
+- A small cache for repeat *input* addresses could remove the last
+  API call for frequently looked-up addresses
 
 ### Confidence Scoring
 - Track lookup accuracy vs. user feedback

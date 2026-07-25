@@ -66,40 +66,30 @@ Create a file named `.env` in the project root:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 GOOGLE_MAPS_API_KEY=AIza...
-AI_PROVIDER=anthropic
 ```
 
-Then load it before running:
-```bash
-# Python script to load .env
-python -c "from dotenv import load_dotenv; load_dotenv()"
-```
+That's it — it is **loaded automatically** at startup (via `python-dotenv`,
+installed with `requirements.txt`). Real environment variables take
+precedence over `.env` values. The AI provider itself is chosen in
+`common/config.py` (`AI_PROVIDER`), not in `.env`.
 
-Or use a manual approach:
-```bash
-# macOS / Linux
-set -a
-source .env
-set +a
-
-# Windows PowerShell
-Get-Content .env | ForEach-Object {
-    $key, $value = $_ -split '='
-    [Environment]::SetEnvironmentVariable($key, $value)
-}
-```
+`.env` is already in `.gitignore`, so your keys can't be committed by accident.
 
 ### Which API Keys Do I Need?
 
-| Version | Anthropic Key | Google Maps Key |
+Keys are only needed by the rung of the lookup ladder that uses them. A
+station name lookup (`--ps`) or an address the locality scan resolves needs
+**no keys at all**.
+
+| Lookup reaches... | AI provider key | Google Maps key |
 |---------|----------------|-----------------|
-| **v1** | ✅ Required | ❌ Not needed |
-| **v2** | ✅ Required | ✅ Required |
+| **Fuzzy / locality match only** | ❌ Not needed | ❌ Not needed |
+| **AI district inference** (v1 & v2) | ✅ Required | ❌ Not needed |
+| **Distance ranking** (v2 only) | — | ✅ Required |
 | **Tests** | ❌ Not needed | ❌ Not needed |
 
-**v1 only**? Just set `ANTHROPIC_API_KEY`.  
-**v2 only**? Set both keys.  
-**Running tests**? No keys needed (mocked).
+The AI key matches your `AI_PROVIDER` setting: `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, or `GOOGLE_API_KEY`.
 
 ### Getting API Keys
 
@@ -112,28 +102,26 @@ Get-Content .env | ForEach-Object {
 #### Google Maps API Key
 1. Visit [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project
-3. Enable "Maps SDK for Android" (or equivalent geocoding API)
+3. Enable the **Geocoding API**
 4. Create an API key (Credentials → Create Credentials → API Key)
-5. Restrict to Geocoding API (Security best practice)
+5. Restrict the key to the Geocoding API (security best practice)
 
 ## Verify Installation
 
-Run the test suite (requires no API keys):
+Run the test suite — it requires **no API keys and makes no network calls**
+(the paid rungs are mocked):
 
 ```bash
 python -m tests.validate_test_cases
 ```
 
-Expected output:
+The last line should read:
 ```
-Running GeoSense test suite...
-✓ Test 1: Fuzzy match "Madhapur" → "Madhapur PS"
-✓ Test 2: Locality scan "Secunderabad"
-✓ Test 3: v1 ranking with AI
-✓ Test 4: v2 distance calculation
-...
-All tests passed! ✓
+SUMMARY  V1 rank-1 6/7 | V2 rank-1 6/7 | parity 7/7 | negative 1/1 | case-2 pin 1/1  => ALL GREEN
 ```
+
+(6/7 is correct — case #3 is a deliberately recorded known failure, not a bug
+in your setup. See the Testing section of the README.)
 
 ## Running GeoSense
 
@@ -145,21 +133,24 @@ python main.py
 
 Follow the prompts:
 ```
-GeoSense v2 (geodesic distance)
-Enter address: Madhapur
-Enter district [optional]: Rangareddy
+  Address        (required) : 6-31-1, Akhila Enclave, Old Bowenpally, Secunderabad, 500011
+  Known PS       (optional) :
+  Known District (optional) :
 ```
 
-Results:
+Results (real output — this address resolves from the Excel alone, no API call):
 ```
-Top 3 Police Stations:
-┌──────────────────┬──────────────┬──────────┬─────────┐
-│ Station          │ District     │ Distance │ Surety  │
-├──────────────────┼──────────────┼──────────┼─────────┤
-│ Madhapur PS      │ Rangareddy   │ 0.2 km   │ High    │
-│ Gachibowli PS    │ Rangareddy   │ 4.1 km   │ High    │
-└──────────────────┴──────────────┴──────────┴─────────┘
+--------------------------------------------------
+  #  Police Station    District              Surety       Distance
+---  ----------------  --------------------  -----------  ----------
+  1  BOWENPALLY        MALKAJGIRI-HYDERABAD  Very Likely  N/A
+--------------------------------------------------
+
+  [LOG] Saved to 'LookupResults': DISTRICT + POLICE STATION | Very Likely
 ```
+
+Distances appear when a lookup reaches the geodesic ranking rung (a district
+is known or inferred and the address geocodes successfully).
 
 ### One-Shot Mode (Single Lookup)
 
@@ -186,18 +177,24 @@ python v2/app.py --help
 ### `ModuleNotFoundError: No module named 'pandas'`
 → Install dependencies: `pip install -r requirements.txt`
 
-### `KeyError: ANTHROPIC_API_KEY`
-→ Set the key before running:
+### `[ERROR] ANTHROPIC_API_KEY not set`
+→ The lookup reached the AI rung without a key. Set it (or add it to `.env`):
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 python main.py
 ```
 
-### `ConnectionError` or `APIError`
-→ Check your API keys are valid (not expired, not revoked)
+### `[ERROR] GOOGLE_MAPS_API_KEY not set`
+→ The lookup reached v2's geocoding rung. Set the key, or run `python main.py v1`.
 
-### `Test suite takes >10 seconds`
-→ Normal for first run (it mocks API responses). Subsequent runs are instant.
+### `ConnectionError` or `APIError`
+→ Check your API keys are valid (not expired, not revoked). Geocoding errors
+are caught and reported as warnings — the lookup degrades honestly instead of
+crashing.
+
+### `[WARN] Could not save coordinates`
+→ The workbook is open in Excel — close it and re-run. Results are still
+correct; the coordinates are simply re-geocoded next time.
 
 ### Google Maps API not working in v2
 → Verify:

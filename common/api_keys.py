@@ -11,9 +11,25 @@ Set your keys before running (only the rung that uses them needs them):
     export ANTHROPIC_API_KEY=sk-ant-...    (if AI_PROVIDER = "anthropic")
     export OPENAI_API_KEY=sk-...           (if AI_PROVIDER = "openai")
     export GOOGLE_API_KEY=AI...            (if AI_PROVIDER = "gemini")
+
+Alternatively, put the same keys in a .env file at the project root — it is
+loaded automatically if python-dotenv is installed. Environment variables
+take precedence over .env values.
 """
 
 import os
+from pathlib import Path
+
+# ── Optional .env support ──────────────────────────────────────────────────────
+# If python-dotenv is installed and a .env file exists at the project root, its
+# values are loaded before any key is read. Real environment variables always
+# win over .env values (load_dotenv never overrides). With no python-dotenv or
+# no .env file, this is a silent no-op — nothing else changes.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
 
 
 def get_key(name, required=True):
