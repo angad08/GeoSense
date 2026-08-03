@@ -200,7 +200,7 @@ def _write_coords(updates):
 
     The LAT/LNG columns are created on first use. Written with openpyxl so the
     workbook's other sheets — including their formulas and tables — survive
-    untouched, the same way lookup_log.py appends to LookupResults.
+    untouched, the same way lookup_log.py appends to LookupLogs.
 
     A failed save (most often: the file is open in Excel) is reported and
     swallowed. The coordinates still apply to the current lookup from memory;

@@ -38,7 +38,7 @@ Execute in order:
 - Prints the advisory warning the engine attached (v2 Case 2 distance check)
 
 ### 5. Logging Layer (`common/lookup_log.py`)
-- Appends each lookup to the `LookupResults` sheet in the same workbook
+- Appends each lookup to the `LookupLogs` sheet in the same workbook
 - Columns: `ADDRESS | RESULT LOOKUP | RESULT MATCH` — the logged wording
   always matches what was displayed to the user
 
@@ -61,7 +61,7 @@ Step 2: AI Ranking (v1/ai_engine.py)
 
 Step 3: Format & Log
   └─ Output top 3 with confidence labels
-  └─ Append to LookupResults sheet
+  └─ Append to LookupLogs sheet
 ```
 
 **The guarantee that matters:** the AI is constrained to choose only from the
@@ -100,7 +100,7 @@ Step 4: Format & Log
   └─ Output top 3 with measured distances
   └─ Advisory warning if the nearest station is farther than
      DISTANCE_WARN_KM (default: 30) — the stated district may be wrong
-  └─ Append to LookupResults sheet
+  └─ Append to LookupLogs sheet
 ```
 
 **Tradeoff**:
@@ -174,7 +174,7 @@ Fuzzy Match: exact match (score 100) on GACHIBOWLI ✓
     ↓
 Output: GACHIBOWLI | CYBERABAD-RANGAREDDY | Guaranteed
     ↓
-Log: appended to LookupResults
+Log: appended to LookupLogs
 ```
 
 ### Case 3a — address names a station area (no API call)
@@ -187,7 +187,7 @@ Locality Scan: token "BOWENPALLY" → BOWENPALLY PS ✓
     ↓
 Output: BOWENPALLY | MALKAJGIRI-HYDERABAD | Very Likely
     ↓
-Log: appended to LookupResults
+Log: appended to LookupLogs
 ```
 
 ### Case 2 — district known, address ranked by distance (1 API call when warm)
@@ -205,7 +205,7 @@ cached coordinates → rank ascending
 Output: top 3 with measured distances; advisory warning if the nearest
         station is > DISTANCE_WARN_KM (30 km) away
     ↓
-Log: appended to LookupResults
+Log: appended to LookupLogs
 ```
 
 ## Testing Strategy

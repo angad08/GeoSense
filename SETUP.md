@@ -146,7 +146,7 @@ Results (real output — this address resolves from the Excel alone, no API call
   1  BOWENPALLY        MALKAJGIRI-HYDERABAD  Very Likely  N/A
 --------------------------------------------------
 
-  [LOG] Saved to 'LookupResults': DISTRICT + POLICE STATION | Very Likely
+  [LOG] Saved to 'LookupLogs': BOWENPALLY | MALKAJGIRI-HYDERABAD | DISTRICT + POLICE STATION | Very Likely
 ```
 
 Distances appear when a lookup reaches the geodesic ranking rung (a district

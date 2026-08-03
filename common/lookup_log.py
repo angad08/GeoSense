@@ -1,7 +1,7 @@
 """
 GeoSense — common/lookup_log.py  (shared)
 ------------------------------------------
-Appends completed lookups to the LookupResults sheet inside the source workbook.
+Appends completed lookups to the LookupLogs sheet inside the source workbook.
 Shared by v1 and v2 — the log format and rules are identical in both.
 
 Rules (feature spec):
@@ -14,7 +14,17 @@ Rules (feature spec):
   - One result row   → logged automatically.
   - Many result rows → ask which Sr.No was selected, log only that one.
 
-Columns: ADDRESS | RESULT LOOKUP | RESULT MATCH
+The sheet is SHARED. These columns are written by the script, located by
+header text so the hand-maintained columns interleaved between them are never
+disturbed:
+
+  ADDRESS | PREDICTED PS | PREDICTED DISTRICT | RESULT LOOKUP | RESULT MATCH
+
+  PREDICTED PS   — the record the user actually selected, not rank 1. Station
+                   name only, so it stays comparable to the hand-entered
+                   ACTUAL PS KNOWN and the sheet's MATCH formula keeps working.
+  PREDICTED DIST — the district of that record. Station names repeat across
+                   districts, so the name alone does not identify it.
   RESULT LOOKUP — what the system figured out:
      Case 1 (PS given)      → "DISTRICT"
      Case 2 (District given) → "POLICE STATION"
@@ -59,7 +69,7 @@ def _select_record(results, interactive):
     while True:
         choice = input(f"  Which Sr.No did you select? {valid} : ").strip()
         if not choice:
-            print("  Skipped — nothing logged.")
+            print("  Skipped — row still logged, selection columns left blank.")
             return None
         if choice.isdigit() and int(choice) in valid:
             return next(r for r in results if r["rank"] == int(choice))

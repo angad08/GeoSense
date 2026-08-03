@@ -45,7 +45,7 @@ It works as a **cost-tiered matching pipeline** — each stage is more expensive
 
 | Stage | Method | Cost |
 |---|---|---|
-| 1. **Standardise** | Trim, case-normalise, and de-duplicate the reference table on load | Free |
+| 1. **Standardise** | Trim and case-normalise the reference table on load, and drop incomplete rows | Free |
 | 2. **Fuzzy match** | Token-based similarity snaps a misspelled name to its canonical row | Free |
 | 3. **Locality scan** | Parses localities out of free-text and matches them against known areas, with guards against low-signal tokens and wide ties | Free |
 | 4. **Geospatial rank** | Geocode the address, rank candidates by measured geodesic distance | 1 API call |
@@ -57,7 +57,20 @@ One rule holds across every stage:
 
 > **The reference table is the source of truth.** No stage — including the LLM — may return a Police Station or District that isn't already in the data. Anything else is rejected rather than returned.
 
-That constraint is what makes the output safe to act on: a wrong answer is possible, but a *fabricated* one isn't. Every completed lookup is appended to a `LookupResults` sheet with its confidence level, giving a running record of how the pipeline is performing in production.
+That constraint is what makes the output safe to act on: a wrong answer is possible, but a *fabricated* one isn't. Every completed lookup is appended to a `LookupLogs` sheet with its confidence level, giving a running record of how the pipeline is performing in production.
+
+### Same name, different district
+
+751 stations, but only 735 distinct names — **15 names repeat across districts**, one of them three times. `NAWABPET` exists in both Mahabubnagar and Vikarabad; `GUNDALA` in three districts. These are genuinely different stations that happen to share a name, verified against the official master.
+
+The lookup key is therefore **(district, station)**, never the station name alone. The consequences are the point:
+
+- A name that repeats is **never resolved by spreadsheet row order** — which row Excel happens to list first has no bearing on the answer.
+- Given a district, the matching record is selected.
+- Given only an address, the district is often already in the text (*"…NAWABPET, POMAL, **MAHABUBNAGAR**…"*) and resolves it for free — no API call, since choosing between records already in hand is a selection, not an inference.
+- Otherwise **every valid record is shown and the user picks.** Nothing is auto-selected.
+
+This is the kind of defect that produces no error and no warning — just a quietly wrong district on a fraction of lookups, discoverable only by auditing. Treating the key as composite makes it structurally impossible.
 
 ## Two Ranking Methods, Compared
 
@@ -87,7 +100,7 @@ $ python main.py --ps "Gachibowli"
   1  GACHIBOWLI        CYBERABAD-RANGAREDDY  Guaranteed  N/A
 --------------------------------------------------
 
-  [LOG] Saved to 'LookupResults': DISTRICT | Guaranteed
+  [LOG] Saved to 'LookupLogs': GACHIBOWLI | CYBERABAD-RANGAREDDY | DISTRICT | Guaranteed
 ```
 
 **Only a messy address** → the locality scan reads the station area straight out of the text — still no API call:
@@ -101,7 +114,7 @@ $ python main.py --address "6-31-1, Flat 101, Akhila Enclave, Old Bowenpally, Se
   1  BOWENPALLY        MALKAJGIRI-HYDERABAD  Very Likely  N/A
 --------------------------------------------------
 
-  [LOG] Saved to 'LookupResults': DISTRICT + POLICE STATION | Very Likely
+  [LOG] Saved to 'LookupLogs': BOWENPALLY | MALKAJGIRI-HYDERABAD | DISTRICT + POLICE STATION | Very Likely
 ```
 
 When the address *doesn't* name a station area, the ladder continues: the district is matched or AI-inferred, and stations are ranked by **measured geodesic distance** (`~4.2 km`-style figures in the Distance column, one Geocoding API call).
@@ -133,7 +146,7 @@ A matcher that can't be evaluated is a guess with extra steps. Two things make t
 **2. A regression harness that runs with no API keys and no network.** The paid stages are mocked, so the deterministic logic can be re-tested on every change for free:
 
 ```
-V1 rank-1 6/7 | V2 rank-1 6/7 | parity 7/7 | negative 1/1 | case-2 pin 1/1  => ALL GREEN
+V1 rank-1 6/7 | V2 rank-1 6/7 | parity 7/7 | negative 1/1 | case-2 pin 1/1 | duplicates 5/5  => ALL GREEN
 ```
 
 What each figure is actually checking:
@@ -144,11 +157,14 @@ What each figure is actually checking:
 | **parity 7/7** | Both ranking methods agree on every case — so a difference is a real signal, not noise |
 | **negative 1/1** | A nonsense address returns **nothing** rather than a confident wrong answer |
 | **case-2 pin 1/1** | A station named in the text stays rank 1 and isn't displaced by distance |
+| **duplicates 5/5** | A station name shared by several districts resolves to the right record — asserting the exact `(station, district)` pairs returned, not merely that the lookup ran |
 
 Two deliberate choices worth calling out:
 
 - **The failing case is recorded, not hidden.** Case 3 returns `BALANAGAR` where `SANATHNAGAR` is expected. It's in the harness as a known failure with the expected value written down — so if a future change happens to fix it, that shows up as a result rather than going unnoticed.
 - **A negative test carries as much weight as a positive one.** Silent false positives are the expensive failure mode here: a wrong station routes a case to the wrong desk and nobody notices for days. Returning nothing is recoverable; returning something plausible and wrong is not.
+
+The duplicate-name checks exist for the same reason. Two of the seven address cases involve a station name that repeats across districts, and both happened to land on the right district anyway — purely because of where those rows sit in the spreadsheet. Tests that assert the exact `(station, district)` pair, rather than the station name alone, are what stop that from passing for the wrong reason.
 
 ---
 
@@ -209,7 +225,26 @@ data/sample_police_stations.xlsx     # preferred
 data/POLICE_STATION.xlsx             # fallback
 ```
 
-It must contain a sheet named `PoliceStation` with `DISTRICT` and `POLICE STATION` columns. `common/config.py` resolves the path automatically — no editing needed (override with `--excel`).
+`common/config.py` resolves the path automatically — no editing needed (override with `--excel`). The workbook needs two sheets:
+
+**`PoliceStation`** — the reference table.
+
+| Column | Required | Notes |
+|---|---|---|
+| `DISTRICT` | ✅ | |
+| `POLICE STATION` | ✅ | May repeat across districts — see [Same name, different district](#same-name-different-district) |
+| `LAT` / `LNG` | — | Created and filled automatically on first use |
+
+**`LookupLogs`** — the audit log, written one row per completed lookup.
+
+This sheet is **shared**: the script writes some columns, you fill in the rest by hand, and they sit interleaved. Writes are therefore located **by header text**, never by position — so a missing or renamed header stops the run with a clear message rather than writing into the wrong column.
+
+| Column | Written by |
+|---|---|
+| `ADDRESS`, `PREDICTED PS`, `PREDICTED DISTRICT`, `RESULT LOOKUP`, `RESULT MATCH` | the script |
+| `FILE NO`, `ACTUAL PS KNOWN`, `STATUS`, `MATCH` | you — never touched by the script |
+
+`PREDICTED PS` holds the station name only, so it stays directly comparable to your hand-entered `ACTUAL PS KNOWN`; the district goes in its own `PREDICTED DISTRICT` column. If you decline to pick a result, the row is still logged with those cells left blank for you to complete. Anything to the right of the table is left alone, and if the sheet uses an Excel Table its range is extended so new rows stay inside it.
 
 ---
 
@@ -275,7 +310,7 @@ It fills every blank row in one pass and **skips rows that already have coordina
 
 | Case | You know | GeoSense resolves | Method |
 |---|---|---|---|
-| 1 | Police Station | → District | Fuzzy match against Excel — no AI |
+| 1 | Police Station | → District | Fuzzy match against Excel — no AI. If the name exists in several districts, a supplied district selects one; otherwise every valid record is returned to choose from |
 | 2 | District | → Police Station | Fuzzy match district → rank stations by distance |
 | 3 | Only the address | → District + Police Station | Locality scan, then AI infers district → rank |
 | 0 | Nothing usable | — | No result returned |
@@ -343,6 +378,9 @@ GeoSense/
 |---|---|---|
 | `EXCEL_FILE` | *(auto)* | Excel path, resolved from the project root |
 | `SHEET_NAME` | `PoliceStation` | Sheet holding the station list |
+| `LOG_SHEET_NAME` | `LookupLogs` | Sheet the audit log is appended to |
+| `LOG_WRITE_COLS` | *(5 headers)* | Columns the script writes, matched by header text |
+| `LOG_MANUAL_COLS` | *(4 headers)* | Hand-maintained columns — never written or cleared |
 | `COL_DISTRICT` | `DISTRICT` | Column header for district |
 | `COL_PS` | `POLICE STATION` | Column header for police station |
 | `COL_LAT` / `COL_LNG` | `LAT` / `LNG` | Coordinate columns (created automatically) |
@@ -365,6 +403,8 @@ GeoSense/
 | `[ERROR] <package> not installed` | Install the package for your chosen `AI_PROVIDER` |
 | `[ERROR] <PROVIDER>_API_KEY not set` | Set the key matching `AI_PROVIDER` in `common/config.py` |
 | `[WARN] Could not save coordinates` | The workbook is open in Excel — close it and re-run |
+| `Sheet 'LookupLogs' not found` | Add the sheet, or point `LOG_SHEET_NAME` at the one you use |
+| `missing expected column(s): …` | Add the named header to `LookupLogs`. Nothing is written until it exists — deliberately, so a value never lands in the wrong column |
 | `No module named geopy` | `pip install -r requirements.txt` |
 | First lookup in a district is slow | Expected — it is geocoding that district's stations once |
 
