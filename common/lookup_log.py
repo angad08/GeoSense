@@ -69,11 +69,15 @@ def _select_record(results, interactive):
 def log_lookup(result, address, known_ps, known_district,
                excel_path=EXCEL_FILE, interactive=True):
     """
-    Append the chosen record of `result` to the LookupResults sheet.
+    Append the chosen record of `result` to the LookupLogs sheet.
 
     Logged regardless of what the user supplied (PS, District, both, or
-    address only). The only thing that stops a write is having nothing to
-    log:
+    address only), and regardless of whether a record was selected — a
+    skipped selection still writes the row, with the record-derived cells
+    (PREDICTED PS, PREDICTED DISTRICT, RESULT MATCH) left blank to fill in
+    by hand.
+
+    The only thing that stops a write is having nothing to log:
       - No results / unrouted case (case 0) → nothing to log.
     """
     results = result.get("results", [])
@@ -85,20 +89,24 @@ def log_lookup(result, address, known_ps, known_district,
         return
 
     record = _select_record(results, interactive)
-    if record is None:
-        return
-
-    match_label = SURETY_LABELS.get(record.get("confidence", "NONE"), "Unknown")
 
     # PREDICTED PS is the record the user actually chose, not rank 1 — with
     # duplicated station names those differ, which is the whole point. The
     # district is written to its own column rather than being concatenated
     # into PREDICTED PS, so PREDICTED PS stays directly comparable to the
     # hand-entered ACTUAL PS KNOWN and the sheet's MATCH formula keeps working.
+    #
+    # If nothing was selected, the row is still written: the lookup happened
+    # and belongs in the log. The cells that depend on a chosen record are
+    # left empty for manual completion rather than filled with a guess — the
+    # same treatment as the hand-maintained columns.
+    match_label = (SURETY_LABELS.get(record.get("confidence", "NONE"), "Unknown")
+                   if record else "")
+
     values = {
         LOG_COL_ADDRESS:   address.strip(),
-        LOG_COL_PRED_PS:   record.get("police_station", ""),
-        LOG_COL_PRED_DIST: record.get("district", ""),
+        LOG_COL_PRED_PS:   record.get("police_station", "") if record else "",
+        LOG_COL_PRED_DIST: record.get("district", "") if record else "",
         LOG_COL_LOOKUP:    lookup_label,
         LOG_COL_MATCH:     match_label,
     }
@@ -109,9 +117,14 @@ def log_lookup(result, address, known_ps, known_district,
         print(f"  [WARN] Could not write to '{LOG_SHEET_NAME}': {e}")
         return
 
-    print(f"\n  [LOG] Saved to '{LOG_SHEET_NAME}': "
-          f"{record.get('police_station', '')} | {record.get('district', '')} | "
-          f"{lookup_label} | {match_label}")
+    if record:
+        print(f"\n  [LOG] Saved to '{LOG_SHEET_NAME}': "
+              f"{record.get('police_station', '')} | {record.get('district', '')} | "
+              f"{lookup_label} | {match_label}")
+    else:
+        print(f"\n  [LOG] Saved to '{LOG_SHEET_NAME}': {lookup_label} | "
+              f"no selection — PREDICTED PS, PREDICTED DISTRICT and RESULT MATCH "
+              f"left blank for you to fill")
 
 
 def _header_columns(ws):

@@ -13,7 +13,6 @@ structured result dict.
 from common.config import COL_DISTRICT, COL_PS, TOP_N, AI_PROVIDER, AI_MODEL, FUZZY_CUTOFF
 from common.matcher import (
     find_ps_in_excel,
-    resolve_ps_with_district,
     find_district_in_excel,
     find_ps_by_localities,
     find_district_by_localities,
@@ -42,46 +41,25 @@ def find_best_match(address, known_ps, known_district, df, client):
 
     # ── CASE 1: Known Police Station ─────────────────────────────────────────
     if known_ps.strip():
-        hits, status = resolve_ps_with_district(known_ps, df, known_district)
+        hits = find_ps_in_excel(known_ps, df)
 
         if hits:
             best       = hits[0]
             confidence = "VERY HIGH" if best["score"] == 100 else "HIGH"
-            kind       = "Exact" if best["score"] == 100 else "Fuzzy"
-
-            # Identical duplicate-handling to v2 — Case 1 must not differ
-            # between versions. See v2/engine.py for the reasoning.
-            out = {
+            return {
                 "case":       1,
-                "confidence": confidence if status != "ambiguous" else "MEDIUM",
-                "method":     f"{kind} match on Police Station (score: {best['score']}%)"
-                              + (f" | duplicate station name — resolved by district "
-                                 f"{best['district']}" if status == "resolved_by_district"
-                                 else ""),
+                "confidence": confidence,
+                "method":     f"{'Exact' if best['score'] == 100 else 'Fuzzy'} match "
+                              f"on Police Station (score: {best['score']}%)",
                 "results": [{
-                    "rank":           i + 1,
-                    "police_station": h["police_station"],
-                    "district":       h["district"],
-                    "confidence":     confidence if status != "ambiguous" else "MEDIUM",
-                    "match_score":    h["score"],
+                    "rank":           1,
+                    "police_station": best["police_station"],
+                    "district":       best["district"],
+                    "confidence":     confidence,
+                    "match_score":    best["score"],
                     "distance":       "N/A",
-                } for i, h in enumerate(hits)],
+                }],
             }
-
-            if status == "resolved_by_district":
-                out["note"] = ("duplicate station name — resolved by district "
-                               f"({best['district']})")
-            elif status == "ambiguous":
-                out["method"] = (f"{kind} match on Police Station "
-                                 f"(score: {best['score']}%) | duplicate station name "
-                                 f"in {len(hits)} districts — select the correct record")
-                out["note"] = (
-                    f"duplicate station name '{best['police_station']}' exists in "
-                    f"{len(hits)} districts: "
-                    + ", ".join(h["district"] for h in hits)
-                    + " — select the correct record"
-                )
-            return out
 
         # PS given but not found — warn, fall through
         print(f"\n  [WARN] '{known_ps}' not found in Excel (threshold: {FUZZY_CUTOFF}%).")
