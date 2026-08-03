@@ -162,11 +162,73 @@ def run():
     print(f"    method: {res['method']}")
     print(f"    rank-1: {res['results'][0] if res['results'] else None}")
 
+    # ── COMPOSITE KEY: duplicate station names ────────────────────────────────
+    # Station names legitimately repeat across districts. The lookup key is
+    # (DISTRICT, POLICE STATION); a duplicated name must never be resolved by
+    # Excel row order. Each check asserts the exact records returned.
+    print("=" * 100)
+    print("CASE 1 / 3a — composite key (duplicate station names)")
+    print("=" * 100)
+
+    def _pairs(res):
+        return [(r["police_station"], r["district"]) for r in res["results"]]
+
+    dup_checks = []
+
+    # [10] Unique name — unchanged behaviour, district is not consulted.
+    r = v2_engine.find_best_match("", "GACHIBOWLI", "", df, client)
+    exp = [("GACHIBOWLI", "CYBERABAD-RANGAREDDY")]
+    ok  = _pairs(r) == exp and r["confidence"] == "VERY HIGH"
+    dup_checks.append(ok)
+    print(f"[10] {'PASS' if ok else 'FAIL':10} unique station -> {_pairs(r)}  exp={exp}")
+
+    # [11] Duplicate + correct district — district selects one valid record.
+    # NAWABPET exists in MAHABUBNAGAR and VIKARABAD; sheet order would give
+    # MAHABUBNAGAR, so returning VIKARABAD proves district, not row order, decided.
+    r = v2_engine.find_best_match("", "NAWABPET", "VIKARABAD", df, client)
+    exp = [("NAWABPET", "VIKARABAD")]
+    ok  = _pairs(r) == exp and "resolved by district" in r.get("note", "")
+    dup_checks.append(ok)
+    print(f"[11] {'PASS' if ok else 'FAIL':10} dup + correct district -> {_pairs(r)}  exp={exp}")
+
+    # [12] Duplicate + non-matching district — show every valid record, pick none.
+    r = v2_engine.find_best_match("", "NAWABPET", "HYDERABAD", df, client)
+    exp = [("NAWABPET", "MAHABUBNAGAR"), ("NAWABPET", "VIKARABAD")]
+    ok  = _pairs(r) == exp and "select the correct record" in r.get("note", "")
+    dup_checks.append(ok)
+    print(f"[12] {'PASS' if ok else 'FAIL':10} dup + non-matching district -> {_pairs(r)}  exp={exp}")
+
+    # [13] 3a duplicate locality — the address names BALANAGAR but no district,
+    # so both valid records must surface as distinct candidates rather than one
+    # being silently dropped by drop_duplicates.
+    dup_addr = "7-8-237 GOUTHAM NAGAR , FEROZGUDA,BALANAGAR,telangana, pin 500011"
+    hits = find_ps_by_localities(dup_addr, df)
+    got  = [(h["police_station"], h["district"]) for h in hits]
+    exp  = [("BALANAGAR", "CYBERABAD-MEDCHAL"), ("BALANAGAR", "MAHABUBNAGAR")]
+    ok   = got == exp
+    dup_checks.append(ok)
+    print(f"[13] {'PASS' if ok else 'FAIL':10} 3a duplicate locality -> {got}")
+    print(f"     exp={exp}")
+
+    # [14] 3a free disambiguation — same shape, but this address names the
+    # district too, so exactly one record should survive without any API call.
+    nb_addr = "1-10/1, NAWABPET,POMAL,MAHABUBNAGAR,TELANGANA PIN 509202"
+    got14 = [(h["police_station"], h["district"])
+             for h in find_ps_by_localities(nb_addr, df)]
+    exp14 = [("NAWABPET", "MAHABUBNAGAR")]
+    ok14  = got14 == exp14
+    dup_checks.append(ok14)
+    print(f"[14] {'PASS' if ok14 else 'FAIL':10} 3a disambiguated by address text -> {got14}  exp={exp14}")
+
+    dup_ok = sum(dup_checks)
+
     print("=" * 100)
     overall = (v1_pass == 6 and v2_pass == 6 and parity == len(CASES)
-               and neg_ok == len(NEGATIVE_CASES) and pin_ok)
+               and neg_ok == len(NEGATIVE_CASES) and pin_ok
+               and dup_ok == len(dup_checks))
     print(f"SUMMARY  V1 rank-1 {v1_pass}/7 | V2 rank-1 {v2_pass}/7 | parity {parity}/7 | "
-          f"negative {neg_ok}/{len(NEGATIVE_CASES)} | case-2 pin {int(pin_ok)}/1  "
+          f"negative {neg_ok}/{len(NEGATIVE_CASES)} | case-2 pin {int(pin_ok)}/1 | "
+          f"duplicates {dup_ok}/{len(dup_checks)}  "
           f"=> {'ALL GREEN' if overall else 'REGRESSION'}")
     print("=" * 100)
     return overall

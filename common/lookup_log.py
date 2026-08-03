@@ -25,7 +25,11 @@ Columns: ADDRESS | RESULT LOOKUP | RESULT MATCH
 
 import openpyxl
 
-from common.config import EXCEL_FILE, LOG_SHEET_NAME, LOG_OLD_SHEET, LOG_COLS
+from common.config import (
+    EXCEL_FILE, LOG_SHEET_NAME, LOG_WRITE_COLS,
+    LOG_COL_ADDRESS, LOG_COL_PRED_PS, LOG_COL_PRED_DIST,
+    LOG_COL_LOOKUP, LOG_COL_MATCH,
+)
 from common.output import SURETY_LABELS
 
 
@@ -86,37 +90,102 @@ def log_lookup(result, address, known_ps, known_district,
 
     match_label = SURETY_LABELS.get(record.get("confidence", "NONE"), "Unknown")
 
+    # PREDICTED PS is the record the user actually chose, not rank 1 — with
+    # duplicated station names those differ, which is the whole point. The
+    # district is written to its own column rather than being concatenated
+    # into PREDICTED PS, so PREDICTED PS stays directly comparable to the
+    # hand-entered ACTUAL PS KNOWN and the sheet's MATCH formula keeps working.
+    values = {
+        LOG_COL_ADDRESS:   address.strip(),
+        LOG_COL_PRED_PS:   record.get("police_station", ""),
+        LOG_COL_PRED_DIST: record.get("district", ""),
+        LOG_COL_LOOKUP:    lookup_label,
+        LOG_COL_MATCH:     match_label,
+    }
+
     try:
-        _append_row(excel_path, [address.strip(), lookup_label, match_label])
+        _append_row(excel_path, values)
     except Exception as e:
         print(f"  [WARN] Could not write to '{LOG_SHEET_NAME}': {e}")
         return
 
     print(f"\n  [LOG] Saved to '{LOG_SHEET_NAME}': "
+          f"{record.get('police_station', '')} | {record.get('district', '')} | "
           f"{lookup_label} | {match_label}")
 
 
-def _append_row(excel_path, row):
+def _header_columns(ws):
+    """Map upper-cased header text -> 1-based column index, from row 1."""
+    header = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
+    return {
+        str(name).strip().upper(): i
+        for i, name in enumerate(header, start=1)
+        if name is not None and str(name).strip()
+    }
+
+
+def _append_row(excel_path, values):
     """
-    Open the workbook, ensure the LookupResults sheet exists (renaming the
-    legacy 'Sheet1' if present), write a header if the sheet is empty, then
-    append `row`. Saves in place; other sheets are preserved untouched.
+    Append one row to the log sheet, writing each value into the column whose
+    HEADER matches — never by position.
+
+    `values` maps header text -> value. Only those columns are written. The
+    manual columns (FILE NO, ACTUAL PS KNOWN, STATUS, MATCH) sit interleaved
+    between the script's columns, so a positional ws.append() would shift every
+    value left and overwrite hand-entered data. Anything to the right of the
+    table — stray unnamed columns, the Accuracy cell — is left untouched.
+
+    A missing expected header raises. Failing loudly is the point: the
+    alternative is writing an address into 'FILE NO' and nobody noticing.
+
+    If the sheet carries an Excel Table, its range is extended to include the
+    new row. Without that the row lands outside the table, its MATCH formula
+    never fills in, and it is silently excluded from the accuracy total.
     """
     wb = openpyxl.load_workbook(excel_path)
 
-    # Rename the legacy sheet on first use; reuse it afterwards.
-    if LOG_SHEET_NAME not in wb.sheetnames and LOG_OLD_SHEET in wb.sheetnames:
-        wb[LOG_OLD_SHEET].title = LOG_SHEET_NAME
+    if LOG_SHEET_NAME not in wb.sheetnames:
+        raise KeyError(
+            f"Sheet '{LOG_SHEET_NAME}' not found in {excel_path}. "
+            f"Sheets present: {', '.join(wb.sheetnames)}. "
+            f"Nothing was written."
+        )
 
-    if LOG_SHEET_NAME in wb.sheetnames:
-        ws = wb[LOG_SHEET_NAME]
-    else:
-        ws = wb.create_sheet(LOG_SHEET_NAME)
+    ws   = wb[LOG_SHEET_NAME]
+    cols = _header_columns(ws)
 
-    # Add a header only if the sheet has no real first row yet.
-    first = next(ws.iter_rows(values_only=True), None)
-    if first is None or all(c is None for c in first):
-        ws.append(LOG_COLS)
+    missing = [c for c in LOG_WRITE_COLS if c.upper() not in cols]
+    if missing:
+        raise KeyError(
+            f"Sheet '{LOG_SHEET_NAME}' is missing expected column(s): "
+            f"{', '.join(missing)}. Found: {', '.join(sorted(cols))}. "
+            f"Nothing was written — refusing to guess which column to use."
+        )
 
-    ws.append(row)
+    # First free row, measured across the named columns only so that trailing
+    # junk to the right cannot inflate it.
+    used     = [cols[c.upper()] for c in LOG_WRITE_COLS] + [
+        i for h, i in cols.items() if h not in {c.upper() for c in LOG_WRITE_COLS}
+    ]
+    last     = 1
+    for r in range(2, ws.max_row + 1):
+        if any(ws.cell(row=r, column=i).value not in (None, "") for i in used):
+            last = r
+    target = last + 1
+
+    for header, value in values.items():
+        ws.cell(row=target, column=cols[header.upper()], value=value)
+
+    # Keep any Excel Table covering these columns in step with the new row.
+    # Note: ws.tables.items() yields (name, ref-string) while ws.tables[name]
+    # yields the Table object — mutate the object, never assign a string back,
+    # or openpyxl fails on save.
+    for name in list(ws.tables):
+        tbl = ws.tables[name]
+        head, tail  = tbl.ref.split(":")
+        col_letters = "".join(ch for ch in tail if ch.isalpha())
+        end_row     = int("".join(ch for ch in tail if ch.isdigit()))
+        if end_row < target:
+            tbl.ref = f"{head}:{col_letters}{target}"
+
     wb.save(excel_path)

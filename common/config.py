@@ -65,13 +65,34 @@ TOP_N           = 3     # number of results to return
 MIN_LOCALITY_LEN = 4    # candidates shorter than this are never considered
 MAX_TIE_WIDTH    = 5    # a top-score tie wider than this → null result
 
-# ── Lookup Results Log ─────────────────────────────────────────────────────────
+# ── Lookup Log ─────────────────────────────────────────────────────────────────
 # Completed lookups are appended to this sheet inside the same workbook.
-# The sheet already exists as "Sheet1"; it is renamed to LOG_SHEET_NAME on first
-# write and reused from then on.
-LOG_SHEET_NAME = "LookupResults"
-LOG_OLD_SHEET  = "Sheet1"
-LOG_COLS       = ["ADDRESS", "RESULT LOOKUP", "RESULT MATCH"]
+#
+# THE SHEET IS SHARED. Some columns are written by this script; the rest are
+# filled in by hand and sit interleaved between them. Writes are therefore
+# located BY HEADER TEXT, never by position — appending positionally would
+# overwrite the manual columns. A missing expected header is a hard error, not
+# something to work around by writing somewhere else.
+LOG_SHEET_NAME = "LookupLogs"
+
+# Written by the script, matched on header text.
+LOG_COL_ADDRESS    = "ADDRESS"
+LOG_COL_PRED_PS    = "PREDICTED PS"
+LOG_COL_PRED_DIST  = "PREDICTED DISTRICT"
+LOG_COL_LOOKUP     = "RESULT LOOKUP"
+LOG_COL_MATCH      = "RESULT MATCH"
+
+LOG_WRITE_COLS = [
+    LOG_COL_ADDRESS,
+    LOG_COL_PRED_PS,
+    LOG_COL_PRED_DIST,
+    LOG_COL_LOOKUP,
+    LOG_COL_MATCH,
+]
+
+# Maintained by hand — never written, never cleared. Listed so the intent is
+# explicit and a future change cannot quietly start writing one of them.
+LOG_MANUAL_COLS = ["FILE NO", "ACTUAL PS KNOWN", "STATUS", "MATCH"]
 
 # ── AI Provider ───────────────────────────────────────────────────────────────
 # Set AI_PROVIDER to switch between providers.

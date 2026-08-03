@@ -135,30 +135,100 @@ def score_match(query, candidate):
     )
 
 
-def find_ps_in_excel(query, df):
+def find_ps_in_excel(query, df, district=None):
     """
     Search all Police Stations in the DataFrame for a query string.
-    Returns a list of dicts sorted best-score first.
+
+    THE LOOKUP KEY IS (DISTRICT, POLICE STATION) — never the station name on
+    its own. Station names legitimately repeat across districts (15 names in
+    the Telangana master, one of them three times); those are valid, distinct
+    records, verified against the official master. Each matching
+    (district, station) pair is therefore returned as its own result. A
+    duplicated name is never collapsed to whichever row happens to sit first
+    in the sheet.
+
+    `district`, when supplied, restricts the search to that district. It
+    disambiguates between equally valid records — it does not override
+    PS-first priority, and it never invents a match. If it matches none of
+    the rows, the caller receives every valid pair and can present them for
+    selection rather than being handed an arbitrary one.
+
+    Returns a list of dicts sorted best-score first, ties broken
+    alphabetically by district so ordering never depends on sheet position
+    (invariant I4).
     Each dict: { police_station, district, score }
     """
+    want = _normalize(district) if district and str(district).strip() else None
+
     results = []
     seen    = set()
 
     for _, row in df.iterrows():
-        ps = row[COL_PS]
-        if ps in seen:
+        ps   = row[COL_PS]
+        dist = row[COL_DISTRICT]
+
+        key = (dist, ps)                    # composite key, not the name alone
+        if key in seen:
             continue
-        seen.add(ps)
+        seen.add(key)
+
+        if want is not None and _normalize(dist) != want:
+            continue
 
         s = score_match(query, ps)
         if s >= FUZZY_CUTOFF:
             results.append({
                 "police_station": ps,
-                "district":       row[COL_DISTRICT],
+                "district":       dist,
                 "score":          round(s, 1),
             })
 
-    return sorted(results, key=lambda x: x["score"], reverse=True)
+    return sorted(results, key=lambda x: (-x["score"], x["district"]))
+
+
+def resolve_ps_with_district(query, df, district=None):
+    """
+    Case-1 resolution for a user-typed Police Station name, honouring the
+    composite (DISTRICT, POLICE STATION) key.
+
+    Returns (hits, status), where status is one of:
+
+      'none'                 — nothing cleared FUZZY_CUTOFF
+      'unique'               — the best-matching name exists in exactly one
+                               district. `district` is not consulted at all:
+                               PS-first priority stands, and behaviour is
+                               unchanged from before the composite key.
+      'resolved_by_district' — the name exists in several districts and the
+                               supplied district selected exactly one of them
+      'ambiguous'            — the name exists in several districts and no
+                               district was supplied, or the supplied one
+                               matched none of them. Every valid record is
+                               returned so the caller can present them for
+                               selection. Nothing is auto-picked, and sheet
+                               order is never the tiebreak.
+
+    A supplied district disambiguates between equally valid records; it never
+    overrides PS-first priority and never suppresses a unique match.
+    """
+    hits = find_ps_in_excel(query, df)
+    if not hits:
+        return [], "none"
+
+    top_name  = hits[0]["police_station"]
+    top_group = [h for h in hits if h["police_station"] == top_name]
+
+    if len(top_group) == 1:
+        return [hits[0]], "unique"
+
+    if district and str(district).strip():
+        want     = _normalize(district)
+        selected = [h for h in top_group if _normalize(h["district"]) == want]
+        if len(selected) == 1:
+            return selected, "resolved_by_district"
+        # Supplied district matched none (or several) of the valid rows —
+        # fall through and show them all rather than guessing.
+
+    return top_group, "ambiguous"
 
 
 def find_district_in_excel(query, df):
@@ -295,17 +365,23 @@ def _specificity_key(hit, name_key):
                               ('LB NAGAR', 2 words) outranks one found via a
                               single split-out fragment ('MALKAJGIRI', 1 word)
       3. candidate length — a longer matching candidate is more specific
-      4. name (A→Z)       — final, fully deterministic alphabetical tiebreak,
-                            so identical hits never depend on sheet order
+      4. name (A→Z)       — deterministic alphabetical tiebreak
+      5. district (A→Z)   — final tiebreak for a station name that legitimately
+                            repeats across districts. Without it two valid
+                            records with the same name tie on every earlier
+                            key, and their order would fall back to dict
+                            insertion — i.e. sheet order, the exact thing
+                            invariant I4 forbids.
 
     Returned as a tuple usable directly with sorted(): the first three are
-    negated so that larger = earlier, the name sorts ascending.
+    negated so that larger = earlier; name and district sort ascending.
     """
     return (
         -hit["score"],
         -len(hit["locality"].split()),
         -len(hit["locality"]),
         hit[name_key],
+        hit.get("district") or "",
     )
 
 
@@ -329,16 +405,62 @@ def _best_by_locality(names_with_district, localities, cutoff):
     the single best-scoring locality per name that clears `cutoff`.
 
     `names_with_district` is an iterable of (name, district) tuples; district
-    may be None for the District scan. Returns a dict:
-        name -> {score, district, locality}
+    may be None for the District scan.
+
+    KEYED ON (name, district), not name alone. A station name that repeats
+    across districts is a set of distinct valid records, so each one competes
+    and survives on its own merit. Keying on the name would silently discard
+    every occurrence after the first — the same defect as collapsing the
+    lookup key, one layer down.
+
+    Returns a dict:
+        (name, district) -> {score, district, locality}
     """
     best = {}
     for name, district in names_with_district:
+        key = (name, district)
         for loc in localities:
             s = locality_score(loc, name)
-            if s >= cutoff and s > best.get(name, {}).get("score", 0):
-                best[name] = {"score": s, "district": district, "locality": loc}
+            if s >= cutoff and s > best.get(key, {}).get("score", 0):
+                best[key] = {"score": s, "district": district, "locality": loc}
     return best
+
+
+def _disambiguate_duplicates_by_text(hits, localities, cutoff):
+    """
+    Free disambiguation for a station name that exists in several districts.
+
+    When the same station name survives in more than one district, the address
+    text itself is often already carrying the answer — '...NAWABPET, POMAL,
+    MAHABUBNAGAR...' names both the station and its district. If exactly one
+    of the tied districts is named in the address, that record is the intended
+    one and the others are dropped.
+
+    This is evidence already in hand, scored with the same strict locality
+    scorer and cutoff — no geocoding, no AI, no new inference. If the address
+    names none of the districts, or names more than one, nothing is dropped:
+    every valid record survives for the caller to present for selection.
+    Choosing between known rows is a selection, not a guess.
+    """
+    by_name = {}
+    for h in hits:
+        by_name.setdefault(h["police_station"], []).append(h)
+
+    kept = []
+    for name, group in by_name.items():
+        if len(group) == 1:
+            kept.extend(group)
+            continue
+
+        supported = [
+            h for h in group
+            if any(locality_score(loc, h["district"]) >= cutoff for loc in localities)
+        ]
+        # Exactly one district named in the address → that record wins.
+        # Zero or several → keep them all and let the user choose.
+        kept.extend(supported if len(supported) == 1 else group)
+
+    return kept
 
 
 def find_ps_by_localities(address, df, cutoff=LOCALITY_CUTOFF):
@@ -360,9 +482,15 @@ def find_ps_by_localities(address, df, cutoff=LOCALITY_CUTOFF):
     if not localities:
         return []
 
+    # Every (station, district) row competes. The previous
+    # drop_duplicates(subset=[COL_PS]) kept whichever row came first in the
+    # sheet, letting Excel position decide which district a duplicated station
+    # name resolved to — a direct breach of invariant I4. A duplicated name
+    # now surfaces once per district as distinct candidates, and the caller
+    # decides between them.
     ps_rows = (
         (row[COL_PS], row[COL_DISTRICT])
-        for _, row in df.drop_duplicates(subset=[COL_PS]).iterrows()
+        for _, row in df.drop_duplicates(subset=[COL_DISTRICT, COL_PS]).iterrows()
     )
     best = _best_by_locality(ps_rows, localities, cutoff)
 
@@ -371,8 +499,12 @@ def find_ps_by_localities(address, df, cutoff=LOCALITY_CUTOFF):
         "district":       info["district"],
         "score":          round(info["score"], 1),
         "locality":       info["locality"],
-    } for name, info in best.items()]
+    } for (name, _dist), info in best.items()]
 
+    # A duplicated station name may already be resolved by the address itself.
+    # Applied before the mass-tie check so that districts ruled out by the text
+    # do not inflate the tie width.
+    hits   = _disambiguate_duplicates_by_text(hits, localities, cutoff)
     ranked = sorted(hits, key=lambda h: _specificity_key(h, "police_station"))
 
     if _mass_tie(ranked):
@@ -402,7 +534,7 @@ def find_district_by_localities(address, df, cutoff=LOCALITY_CUTOFF):
         "district": name,
         "score":    round(info["score"], 1),
         "locality": info["locality"],
-    } for name, info in best.items()]
+    } for (name, _none), info in best.items()]
 
     ranked = sorted(hits, key=lambda h: _specificity_key(h, "district"))
 
