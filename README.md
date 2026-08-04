@@ -25,7 +25,7 @@
 
 Passport enrollment verification has to land each applicant's address on the **correct Police Station** — the station that physically carries out the check. That single step quietly breaks down:
 
-- Hyderabad alone spans **hundreds of police stations** across overlapping districts, zones, and commissionerates.
+- The metro districts alone hold **125 police stations** across overlapping districts, zones, and commissionerates — 751 across the state.
 - The links run **both ways and people only ever have half of it** — sometimes the police station is known but not which district it sits in; sometimes the district is known but not which station to send the case to; sometimes there's nothing but a **messy free-text address** full of door numbers, PIN codes, landmarks, and misspelled localities.
 - That mapping survives in one or two experienced officers' memory, or in a spreadsheet too long to scroll.
 
@@ -51,7 +51,7 @@ It works as a **cost-tiered matching pipeline** — each stage is more expensive
 | 4. **Geospatial rank** | Geocode the address, rank candidates by measured geodesic distance | 1 API call |
 | 5. **Inference** | An LLM infers the district only when the text alone can't | 1 API call |
 
-Most lookups never reach stages 4–5. That ordering is deliberate: **the cheapest deterministic method that can answer the question, answers it** — the expensive, non-reproducible steps are a fallback, not the default.
+Stages 4 and 5 run only when the free stages cannot answer. That ordering is deliberate: **the cheapest deterministic method that can answer the question, answers it** — the expensive, non-reproducible steps are a fallback, not the default. How often each stage fires in practice is not yet measured; `LookupLogs` records the case for every lookup, so it will be.
 
 One rule holds across every stage:
 
@@ -72,7 +72,7 @@ The lookup key is therefore **(district, station)**, never the station name alon
 
 This is the kind of defect that produces no error and no warning — just a quietly wrong district on a fraction of lookups, discoverable only by auditing. Treating the key as composite makes it structurally impossible.
 
-## Two Ranking Methods, Compared
+## Two Ranking Methods, and Why v2 Is Default
 
 The ranking stage was built twice, deliberately. Everything else — standardisation, matching, routing, output, logging — is shared code in `common/`, so the ranking method is the **only** variable between the two versions.
 
@@ -132,7 +132,7 @@ Same tool, opposite directions — and every station printed is a real row from 
 | Only the local expert can do it reliably | **Anyone** runs it and gets the same result |
 | Answers drift between staff and shifts | **Deterministic** — the Excel decides, not memory |
 | AI tools that confidently invent fake stations | **Zero hallucinated stations** — every result is real |
-| Misrouted cases → re-work and delays | Right station the first time → **fewer rejections, faster turnaround** |
+| Misrouted cases → re-work and delays | Same input, same station — and a misroute becomes **traceable** instead of invisible |
 | No record of how a decision was made | **Built-in audit trail** of every lookup |
 
 The point isn't the matching algorithm — it's that a slow, expert-dependent, unmeasured step becomes **fast, consistent, and quantified**.
@@ -288,15 +288,15 @@ v2 needs a coordinate for every police station. Rather than geocoding them on ev
 
 | DISTRICT | POLICE STATION | LAT | LNG |
 |---|---|---|---|
-| ADILABAD | ADILABAD I TOWN | 19.6641 | 78.5320 |
-| ADILABAD | BOATH | *(blank)* | *(blank)* |
+| ADILABAD | ADILABAD I TOWN | 19.6765668 | 78.5320841 |
+| ADILABAD | *(a newly added station)* | *(blank)* | *(blank)* |
 
 The rule is simply:
 
 - **Blank** → not geocoded yet → geocoded once, on demand, and written back
 - **Filled** → used directly, no API call
 
-So **adding a station to the Excel needs no rebuild step**. The first lookup that touches it geocodes it and saves the result; every lookup after that is free. Once a district is warm, a lookup makes exactly **one** API call — for the user's address.
+So **adding a station to the Excel needs no rebuild step**. The first lookup that touches it geocodes it and saves the result; every lookup after that is free. Once a district is warm, a lookup that reaches the ranking stage makes exactly **one Geocoding call** — for the user's address. (An address that also needs its district inferred adds one AI call on top; a lookup answered by the free stages makes neither.)
 
 A station that fails to geocode is left blank, **named in a warning, and never silently dropped**. It is retried next run, so a transient network problem can't become a permanent hole. If one keeps failing, its name probably needs fixing in the Excel.
 
@@ -321,13 +321,13 @@ It fills every blank row in one pass and **skips rows that already have coordina
 
 Confidence shown in the output:
 
-| Label | Meaning |
+| Label | When it is used |
 |---|---|
-| Guaranteed | Exact match on PS name |
-| Very Likely | Fuzzy match on PS name |
-| Likely | District matched, stations ranked |
-| Possible | Inferred district and PS |
-| Unknown | No confident answer |
+| Guaranteed | A station name you typed matched a row exactly |
+| Very Likely | A typed name matched closely, **or** the address clearly named a station area, **or** the top result of a ranked district |
+| Likely | A lower-ranked candidate, a typed name that exists in **several districts** (choose one), or a district the model inferred |
+| Possible | Distance ranking was unavailable, or a lower-ranked candidate from an inferred district |
+| Unknown | No confident answer — nothing is returned |
 
 When v2 cannot geocode the input address, it does **not** fake a ranking — it returns the district's stations unranked, marked `Possible`, and says distance ranking was unavailable.
 
