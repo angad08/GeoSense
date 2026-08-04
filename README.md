@@ -1,6 +1,6 @@
 # GeoSense — Address → Police Station Record Linkage
 
-> A reference table of **751 police stations**. Thousands of hand-typed addresses. No consistent way to connect the two — and no measurement of how often the connection was wrong.
+> A reference table of **751 police stations**. Free-text addresses off application forms, pasted in one at a time. No consistent way to connect the two — and no measurement of how often the connection was wrong.
 
 **Domain:** passport verification, Hyderabad & Telangana.
 **Method:** data standardisation, fuzzy record linkage, geospatial enrichment, and accuracy measured against a hand-labelled set.
