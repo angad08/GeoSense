@@ -74,7 +74,7 @@ This is the kind of defect that produces no error and no warning — just a quie
 
 ## Two Ranking Methods, Compared
 
-The ranking stage was built twice, deliberately, so the two approaches could be run against the same cases and compared. Everything else — standardisation, matching, routing, output, logging — is shared code in `common/`, so the ranking method is the **only** variable between them.
+The ranking stage was built twice, deliberately. Everything else — standardisation, matching, routing, output, logging — is shared code in `common/`, so the ranking method is the **only** variable between the two versions.
 
 | | **v1** | **v2** (default) |
 |---|---|---|
@@ -83,9 +83,11 @@ The ranking stage was built twice, deliberately, so the two approaches could be 
 | **Re-run on the same input** | May vary | Identical every time |
 | **Needs** | Any one AI provider key | Any one AI provider key + `GOOGLE_MAPS_API_KEY` |
 
-**v2 is the default, and the harness is why.** Both methods rank the correct station first on the same 6 of 7 cases — so the estimate wasn't buying accuracy. But v2's output is reproducible, explainable from the underlying coordinates, and free to re-run once coordinates are stored. Same result, lower cost, and auditable — so the estimated version became the fallback for when no Maps key is available.
+**v2 is the default on properties that can be checked without a benchmark:** its distance is reproducible from the stored coordinates, explainable after the fact, identical on every re-run of the same input, and free to recompute once coordinates are saved. An estimate offers none of those regardless of how accurate it is. v1 remains the fallback for when no Maps key is available.
 
-Keeping both is what makes that a finding rather than an assumption.
+**Which one ranks *better* is not yet measured, and this repo does not claim it.** The regression harness runs with the paid stages mocked, and on its current cases the free text scan resolves every address before ranking is reached — so neither ranking method is exercised (see [How It's Measured](#how-its-measured)). What the harness does establish is that the shared layer really is shared, which is the precondition for a fair comparison later: any difference that shows up *must* come from the ranking method, because nothing else differs.
+
+The honest test needs production data, not fixtures — the same addresses through both versions with keys live, scored against the hand-labelled `ACTUAL PS KNOWN` column that `LookupLogs` is accumulating. Until there are enough rows for that, "v2 is more accurate" would be an assumption wearing a number.
 
 ## See It Work
 
@@ -153,11 +155,13 @@ What each figure is actually checking:
 
 | Metric | What it proves |
 |---|---|
-| **rank-1 6/7** | The correct station is ranked first on 6 of 7 address-only cases |
-| **parity 7/7** | Both ranking methods agree on every case — so a difference is a real signal, not noise |
+| **rank-1 6/7** | The **locality scan** puts the correct station first on 6 of 7 address-only cases |
+| **parity 7/7** | v1 and v2 return identical results on every case — the shared layer really is shared |
 | **negative 1/1** | A nonsense address returns **nothing** rather than a confident wrong answer |
-| **case-2 pin 1/1** | A station named in the text stays rank 1 and isn't displaced by distance |
+| **case-2 pin 1/1** | A station named in the text stays rank 1 and isn't displaced by distance — checked against canned distances, so it proves the composition, not the distances |
 | **duplicates 5/5** | A station name shared by several districts resolves to the right record — asserting the exact `(station, district)` pairs returned, not merely that the lookup ran |
+
+**What these numbers do not cover.** Every current case is answered by the free text scan before ranking is reached, so neither ranking method runs — the mock is never even called. That makes 6/7 a measure of `common/matcher.py`, not of v1 versus v2. Comparing the two ranking methods needs live keys and labelled production rows, which `LookupLogs` is collecting; it is not something this harness can answer, and the harness should not be read as answering it.
 
 Two deliberate choices worth calling out:
 
