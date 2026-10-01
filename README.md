@@ -8,9 +8,19 @@
 
 **Where this started.** Cases were being routed to the wrong police station, and the assumption was that people needed to be more careful. Looking at it as data said otherwise: one reference table nobody could query consistently, addresses that never matched it cleanly, and **no metric for how often it failed**. That reframing — a data quality problem, not a diligence problem — is what the rest of this repo is.
 
+**How it grew.**
+
+| When | Coverage | What changed |
+|---|---|---|
+| June 2026 | **Hyderabad & Telangana** — 751 stations, 39 districts | First version: one state, AI-estimated ranking (now v1) |
+| July–Aug 2026 | Telangana | Measured geodesic distance (v2), stored station coordinates, `(district, station)` key, regression harness |
+| Sept–Oct 2026 | **+ Andhra Pradesh** (870 stations, 26 districts) and **+ Tamil Nadu** (1,379 stations, 46 districts) — **3,000 stations, 111 districts** | All region-specific code removed; states are read from the Excel's `STATE` column. TN / AP name formats, coordinate repair for hard-to-find stations |
+
+Adding the next state is a data change, not a code change — see [Scope & Roadmap](#scope--roadmap). Details per release are in [CHANGELOG.md](CHANGELOG.md).
+
 | Outcome | How it was achieved |
 |---|---|
-| ⏱️ **Manual scroll → seconds** | A 751-row reference table queried in either direction instead of read by eye |
+| ⏱️ **Manual scroll → seconds** | A 3,000-row reference table queried in either direction instead of read by eye |
 | 📞 **Fewer applicant callbacks** | Messy free-text addresses standardised and matched on the spot, not sent back for confirmation |
 | 📐 **A number replaced a guess** | Ranking moved from an estimate to **measured geodesic distance** — reproducible and checkable |
 | 🎯 **No fabricated values** | Every returned value must already exist in the reference table, or it is rejected |
@@ -25,7 +35,7 @@
 
 Passport enrollment verification has to land each applicant's address on the **correct Police Station** — the station that physically carries out the check. That single step quietly breaks down:
 
-- The metro districts alone hold **125 police stations** across overlapping districts, zones, and commissionerates — 751 across the state.
+- Hyderabad's metro districts alone hold **125 police stations** across overlapping districts, zones, and commissionerates — 751 across Telangana, and **3,000** once Andhra Pradesh and Tamil Nadu are included.
 - The links run **both ways and people only ever have half of it** — sometimes the police station is known but not which district it sits in; sometimes the district is known but not which station to send the case to; sometimes there's nothing but a **messy free-text address** full of door numbers, PIN codes, landmarks, and misspelled localities.
 - That mapping survives in one or two experienced officers' memory, or in a spreadsheet too long to scroll.
 
@@ -61,7 +71,7 @@ That constraint is what makes the output safe to act on: a wrong answer is possi
 
 ### Same name, different district
 
-751 stations, but only 735 distinct names — **15 names repeat across districts**, one of them three times. `NAWABPET` exists in both Mahabubnagar and Vikarabad; `GUNDALA` in three districts. These are genuinely different stations that happen to share a name, verified against the official master.
+3,000 stations, but only 2,910 distinct names — **77 names repeat across districts**, some across states. `NAWABPET` exists in Mahabubnagar and Vikarabad (Telangana) and in Nellore (Andhra Pradesh); `GUNDALA` in three Telangana districts; `SIPCOT` in six Tamil Nadu districts. These are genuinely different stations that happen to share a name, verified against the official master.
 
 The lookup key is therefore **(district, station)**, never the station name alone. The consequences are the point:
 
