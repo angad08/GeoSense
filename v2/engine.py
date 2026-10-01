@@ -38,7 +38,9 @@ from common.matcher import (
 )
 from common.state_filter import filter_by_state
 from v2.ai_engine import ai_infer_district
-from v2.geopy_distance import rank_ps_by_distance, measure_from_address
+from v2.geopy_distance import (
+    rank_ps_by_distance, measure_from_address, geodesic_distance, _load_coords_cache,
+)
 
 
 def find_best_match(address, known_ps, known_district, df, ai_client):
@@ -68,8 +70,49 @@ def find_best_match(address, known_ps, known_district, df, ai_client):
                    "a differently named station. Distances cannot distinguish "
                    "them; confirm jurisdiction independently.")
         result["warning"] = (result.get("warning", "") + " " + message).strip()
+    _merge_relisted_stations(result)
     result["state_scope"] = state_scope
     return result
+
+
+# Two rows with the same station name whose stored points are this close are
+# one station listed twice — e.g. Tamil Nadu stations kept under VELLORE and
+# under RANIPET / TIRUPATHUR after the 2019 split. Distinct same-name stations
+# in the sheet are all 5 km+ apart.
+RELISTED_MAX_KM = 0.5
+
+
+def _merge_relisted_stations(result):
+    """
+    Show a station listed under two districts once, naming both districts,
+    instead of letting it fill two of the shown slots. Presentation only: the
+    sheet keeps both rows, and nothing merges without both stored coordinates.
+    """
+    rows = result.get("results", [])
+    if len(rows) < 2:
+        return
+    coords = _load_coords_cache()
+    kept, merged = [], []
+    for row in rows:
+        point = coords.get((row["district"], row["police_station"]))
+        twin = next((k for k in kept
+                     if k["police_station"] == row["police_station"]
+                     and point and k["_point"]
+                     and geodesic_distance(point, k["_point"]) <= RELISTED_MAX_KM), None)
+        if twin:
+            twin["district"] += f" / {row['district']}"
+            merged.append(twin)
+            continue
+        row["_point"] = point
+        kept.append(row)
+    for i, row in enumerate(kept, 1):
+        row.pop("_point")
+        row["rank"] = i
+    if merged:
+        result["results"] = kept
+        note = "; ".join(f"{m['police_station']} is listed under {m['district']} "
+                         f"(same station)" for m in merged)
+        result["note"] = (result.get("note", "") + " " + note).strip()
 
 
 def _km_label(km):

@@ -37,6 +37,7 @@ This file has two distinct layers, kept deliberately separate:
 """
 
 import re
+from functools import lru_cache
 
 from rapidfuzz import fuzz
 
@@ -95,8 +96,37 @@ def _normalize(text):
     # City station codes are catalogue identifiers, not locality names.
     text = re.sub(r"^[A-Z]{1,2}\s*-?\s*\d{1,3}[A-Z]?\s*[-\s]\s*", "", text)
     text = strip_ps_noise(text).replace("-", " ")
+    # All-women stations are written both ways: "ALL WOMEN PS BODI" (Theni)
+    # and "AMBAI AWPS". Fold both to "<PLACE> AWPS" so they compare as equal.
+    text = re.sub(r"^ALL\s+WOMEN\s+(?:POLICE\s+STATION\s+|P\.?\s*S\.?\s+)?(.+)$",
+                  r"\1 AWPS", text)
     text = re.sub(r"[^A-Z0-9 ]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+@lru_cache(maxsize=None)
+def _name_variants(name):
+    """
+    The forms a station name may appear under in an address, normalised.
+
+    Beyond the name itself: without a bracketed qualifier ("GHANPUR (MULUGU)",
+    "SIRPUR(U)" → GHANPUR, SIRPUR) and without Andhra's upgraded-station
+    suffix ("MYDUKUR U/G" → MYDUKUR). The qualifier is only ever dropped,
+    never matched on its own, and a variant shorter than MIN_LOCALITY_LEN is
+    discarded (invariant I1), so no generic fragment gains a new route in.
+
+    The address scan further keeps a short form only when it is unambiguous in
+    the sheet (see _unambiguous_variants): "SIRPUR(U)" must not answer for the
+    town of Sirpur Kaghaznagar just because its bracket was dropped.
+    """
+    raw = str(name).strip().upper()
+    forms = {_normalize(raw)}
+    for alt in (re.sub(r"\s*\([^)]*\)\s*", " ", raw),
+                re.sub(r"\s+U\s*/\s*G\.?$", "", raw)):
+        alt = _normalize(alt)
+        if alt and _significant_len(alt) >= MIN_LOCALITY_LEN:
+            forms.add(alt)
+    return forms
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,11 +164,9 @@ def score_match(query, candidate):
       partial_ratio    — handles partial / substring matches (coverage-scaled)
     """
     a = _normalize(query)
-    b = _normalize(candidate)
     return max(
-        fuzz.WRatio(a, b),
-        fuzz.token_sort_ratio(a, b),
-        _scaled_partial_ratio(a, b),
+        max(fuzz.WRatio(a, b), fuzz.token_sort_ratio(a, b), _scaled_partial_ratio(a, b))
+        for b in _name_variants(candidate)
     )
 
 
@@ -343,7 +371,7 @@ def extract_localities(address, extra_stopwords=frozenset()):
     return list(dict.fromkeys(candidates))
 
 
-def locality_score(token, candidate):
+def locality_score(token, candidate, forms=None):
     """
     Score an address-derived token against an Excel Police Station / District
     name. This is the STRICT scorer, and the heart of invariant I2.
@@ -377,17 +405,15 @@ def locality_score(token, candidate):
     unlikely.
     """
     a = _normalize(token)
-    b = _normalize(candidate)
-    ordinary = max(
-        fuzz.token_sort_ratio(a, b),
-        _scaled_partial_ratio(a, b),
-    )
-    # A full joined name such as ANNANAGAR is the same locality as ANNA NAGAR.
-    # Require full-length agreement; this gives no substring reward to NAGAR.
-    joined_a, joined_b = a.replace(" ", ""), b.replace(" ", "")
-    if len(joined_a) >= 7 and joined_a == joined_b:
-        return 100.0
-    return ordinary
+    best = 0.0
+    for b in (forms or _name_variants(candidate)):
+        # A full joined name such as ANNANAGAR is the same locality as ANNA NAGAR.
+        # Require full-length agreement; this gives no substring reward to NAGAR.
+        joined_a, joined_b = a.replace(" ", ""), b.replace(" ", "")
+        if len(joined_a) >= 7 and joined_a == joined_b:
+            return 100.0
+        best = max(best, fuzz.token_sort_ratio(a, b), _scaled_partial_ratio(a, b))
+    return best
 
 
 def _specificity_key(hit, name_key):
@@ -434,7 +460,30 @@ def _mass_tie(ranked):
     return sum(1 for h in ranked if h["score"] == top) > MAX_TIE_WIDTH
 
 
-def _best_by_locality(names_with_district, localities, cutoff):
+def _unambiguous_variants(names):
+    """
+    name -> the forms the address scan may match it under.
+
+    A short form (bracket or U/G dropped) is kept only if it is not also a
+    word or phrase of any OTHER station name in `names`. The bracket is often
+    exactly what separates same-base stations — SIRPUR(U) vs SIRPUR TOWN,
+    ATHMAKUR (S) vs ATHMAKUR, PRODDATUR U/G vs PRODDATUR II TOWN — and then the
+    full name is the only safe form. Derived from the sheet, so any state works.
+    """
+    names  = list(dict.fromkeys(names))
+    padded = {n: f" {_normalize(n)} " for n in names}
+    out = {}
+    for n in names:
+        full  = _normalize(n)
+        forms = {full}
+        for alt in _name_variants(n) - {full}:
+            if not any(f" {alt} " in padded[o] for o in names if o != n):
+                forms.add(alt)
+        out[n] = forms
+    return out
+
+
+def _best_by_locality(names_with_district, localities, cutoff, variants=None):
     """
     Score every (name, district) pair against every locality token, keeping
     the single best-scoring locality per name that clears `cutoff`.
@@ -454,8 +503,9 @@ def _best_by_locality(names_with_district, localities, cutoff):
     best = {}
     for name, district in names_with_district:
         key = (name, district)
+        forms = variants.get(name) if variants else None
         for loc in localities:
-            s = locality_score(loc, name)
+            s = locality_score(loc, name, forms)
             if s >= cutoff and s > best.get(key, {}).get("score", 0):
                 best[key] = {"score": s, "district": district, "locality": loc}
     return best
@@ -523,11 +573,10 @@ def find_ps_by_localities(address, df, cutoff=LOCALITY_CUTOFF):
     # name resolved to — a direct breach of invariant I4. A duplicated name
     # now surfaces once per district as distinct candidates, and the caller
     # decides between them.
-    ps_rows = (
-        (row[COL_PS], row[COL_DISTRICT])
-        for _, row in df.drop_duplicates(subset=[COL_DISTRICT, COL_PS]).iterrows()
-    )
-    best = _best_by_locality(ps_rows, localities, cutoff)
+    pairs   = df.drop_duplicates(subset=[COL_DISTRICT, COL_PS])
+    ps_rows = list(zip(pairs[COL_PS], pairs[COL_DISTRICT]))
+    best = _best_by_locality(ps_rows, localities, cutoff,
+                             _unambiguous_variants(n for n, _ in ps_rows))
 
     hits = [{
         "police_station": name,

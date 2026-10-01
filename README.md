@@ -424,7 +424,8 @@ Nothing in the code is tied to a region. The state list, the state words ignored
 Extending it is mostly **data, not development**, because all geography lives in the Excel file:
 
 - ✅ **More regions** — add any state by adding its rows (with STATE filled) to the station list. No code or config change.
-- 🔜 **Richer address parsing** — station-code prefixes (e.g. Chennai's `K-4 ANNANAGAR`) and joined/split words (ANNA NAGAR vs ANNANAGAR).
+- ✅ **Richer address parsing** — station-code prefixes (Chennai's `K-4 ANNANAGAR`), joined/split words (ANNA NAGAR vs ANNANAGAR), `P.S` suffixes, all-women stations in either format (`ALL WOMEN PS BODI` = `BODI AWPS`), and names with a bracket or `U/G` (`MYDUKUR U/G` matches "MYDUKUR") — the short form is used only when no other station shares it, so `SIRPUR(U)` never answers for SIRPUR TOWN.
+- ✅ **Relisted stations** — a station listed under two districts at the same point (e.g. Tamil Nadu's VELLORE / RANIPET rows after the 2019 split) is shown once, naming both districts. The sheet keeps both rows.
 - 🔜 **Batch mode** — resolve a whole sheet of addresses in one pass.
 - 🔜 **API / web front-end** — offer resolution as a service.
 
