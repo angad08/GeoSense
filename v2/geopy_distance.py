@@ -26,7 +26,7 @@ from common.api_keys import get_key
 from common.matcher import strip_ps_noise
 from v2.config import (
     TOP_N, EXCEL_FILE, SHEET_NAME, COL_DISTRICT, COL_PS, COL_STATE,
-    COL_LAT, COL_LNG, GEOCODE_COUNTRY, STATE_MATCH_CUTOFF,
+    COL_LAT, COL_LNG, GEOCODE_COUNTRY, STATE_MATCH_CUTOFF, SEARCH_ALIAS_FILE,
     SIBLING_MAX_KM, SIBLING_MIN_COUNT, STATION_PLACE_MATCH,
     COORD_LAT_MIN, COORD_LAT_MAX, COORD_LNG_MIN, COORD_LNG_MAX,
 )
@@ -384,10 +384,35 @@ def clean_station_name(ps):
     return name or raw
 
 
+_search_names = None
+
+
+def search_name(district, ps):
+    """
+    The name to search Google with: the station's entry in SEARCH_ALIAS_FILE
+    if it has one, else its sheet name. Search text only — the sheet is never
+    changed, and every check still applies to what Google returns.
+    """
+    global _search_names
+    if _search_names is None:
+        import csv
+        _search_names = {}
+        if SEARCH_ALIAS_FILE.exists():
+            with open(SEARCH_ALIAS_FILE, newline="", encoding="utf-8-sig") as f:
+                for row in csv.DictReader(f):
+                    d, p, s = (str(row.get(k) or "").strip().upper()
+                               for k in (COL_DISTRICT, COL_PS, "SEARCH NAME"))
+                    if d and p and s:
+                        _search_names[(d, p)] = s
+    key = (str(district).strip().upper(), str(ps).strip().upper())
+    return _search_names.get(key, ps)
+
+
 def station_geocode_query(ps, district, state):
     """
     The geocode query for one station, built from that station's own row:
         "{clean PS_NAME} Police Station, {DISTRICT}, {STATE}, India"
+    with PS_NAME replaced by its search name, if SEARCH_ALIAS_FILE has one.
 
     Returns None when STATE is blank. There is no fallback state: district names
     repeat across states, so a guessed state yields a confident wrong location,
@@ -396,7 +421,8 @@ def station_geocode_query(ps, district, state):
     state = "" if state is None else str(state).strip()
     if not state:
         return None
-    return f"{clean_station_name(ps)} Police Station, {district}, {state}, India"
+    name = clean_station_name(search_name(district, ps))
+    return f"{name} Police Station, {district}, {state}, India"
 
 
 def coords_in_envelope(lat, lng):
@@ -509,7 +535,7 @@ def geocode_station_place(district, ps, coords):
     state = _state_cache.get(key, "")
     if not state:
         return None, "STATE is blank"
-    place = station_place_name(ps)
+    place = station_place_name(search_name(district, ps))
     top   = _geocode_top(f"{place}, {district}, {state}, India")
     if not top:
         return None, "no result"

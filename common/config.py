@@ -49,6 +49,12 @@ GEOCODE_COUNTRY = "IN"           # ISO 3166-1 alpha-2
 COL_LAT        = "LAT"
 COL_LNG        = "LNG"
 
+# Search names for stations whose official name Google cannot find
+# ("T.V.NALLUR" -> "THIRUVENNAINALLUR"). Columns: DISTRICT, POLICE STATION,
+# SEARCH NAME. Only the geocode query uses it; the sheet name never changes and
+# every safety check still applies to the result.
+SEARCH_ALIAS_FILE = PROJECT_ROOT / "data" / "station_search_names.csv"
+
 # ── Coordinate Sanity Check ────────────────────────────────────────────────────
 # A geocoded station is written only if Google places it in the SAME state as
 # the row's own STATE cell (checked in v2/geopy_distance.py against the result's
