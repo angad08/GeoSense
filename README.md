@@ -318,6 +318,23 @@ python scripts/build_ps_coords.py --restack --fix        # all of them, saved
 
 One Geocoding call per station. A move is saved only if Google returns a village / town whose name matches the station, in the row's state, near the rest of its district, and not on another station's point; otherwise the station keeps its current point. Back up the Excel and close it first.
 
+**Stations Google cannot find by their name.** Some official names are abbreviated, spelled differently from Google, or too generic to search (`T.V.NALLUR`, `CHENAM`, `BAZAAR`). For these, add a row to `data/station_search_names.csv`, then rerun `build_ps_coords.py`:
+
+| DISTRICT | POLICE STATION | SEARCH NAME |
+|---|---|---|
+| VILUPPURAM | T.V.NALLUR | THIRUVENNAINALLUR |
+| TIRUVANNAMALAI | CHENAM | CHENGAM |
+| RAMANATHAPURAM | BAZAAR | RAMANATHAPURAM BAZAAR |
+
+- DISTRICT and POLICE STATION must match the Excel row exactly; SEARCH NAME is what Google is asked for.
+- Only the geocode search uses it. The Excel name is never changed, and normal lookups never read this file.
+- Every safety check (state, district, same point) still applies to the result.
+- Only add a row for a station that failed. A row that no longer matches the Excel (station renamed) is ignored.
+
+It is mostly idle: once a station has coordinates it is never searched again. Its use is recovery — if coordinates are ever wiped (OneDrive rollback, `--audit --fix`), a rerun finds these stations again without redoing the research.
+
+If Google cannot find a station under any name, type its verified LAT / LNG into the Excel by hand; the script keeps hand-entered values.
+
 ---
 
 ## How It Works
@@ -380,6 +397,7 @@ GeoSense/
 ├── tests/
 │   └── validate_test_cases.py   # Regression harness (no network)
 ├── data/                        # Put your Excel here (not committed)
+│   └── station_search_names.csv #   Search names for hard-to-find stations (committed)
 ├── requirements.txt
 └── README.md
 ```
@@ -399,6 +417,7 @@ GeoSense/
 | `COL_PS` | `POLICE STATION` | Column header for police station |
 | `COL_LAT` / `COL_LNG` | `LAT` / `LNG` | Coordinate columns (created automatically) |
 | `COL_STATE` | `STATE` | Per-row state; station query is `{PS} Police Station, {DISTRICT}, {STATE}, India`. Blank → station skipped, never defaulted |
+| `SEARCH_ALIAS_FILE` | `data/station_search_names.csv` | Search names for stations Google cannot find by their Excel name — see [Station Coordinates](#station-coordinates-v2) |
 | `COORD_LAT_MIN/MAX`, `COORD_LNG_MIN/MAX` | `12.5–20.0`, `76.5–85.0` | TS+AP envelope; a geocoded station outside it is rejected, not written |
 | `SIBLING_MAX_KM` / `SIBLING_MIN_COUNT` | `35` / `3` | A geocoded station more than 35 km from every other station of its district **and** placed by Google in another district is a same-name village elsewhere — rejected. `python scripts/build_ps_coords.py --audit [--fix]` re-checks stored coordinates the same way |
 | `FUZZY_CUTOFF` | `80` | Minimum fuzzy score (0–100) to accept a match |
