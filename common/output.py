@@ -7,7 +7,8 @@ A result may also carry a warning or note about address precision, missing
 coordinates, or shared station coordinates. These are printed under the table.
 
 Every result also carries `state_scope` (common/state_filter.py), printed under
-the table so it is always clear which state's stations were searched.
+the table when a state was named or every state was searched. The State column
+appears only for an all-states search.
 """
 
 import textwrap
@@ -60,8 +61,10 @@ def print_output(result):
     if result.get("method"):
         print(f"  Method: {result['method']}")
 
+    # "all states searched" is true only when the rows carry a state; a known
+    # station or district already kept the search inside one district.
     scope = result.get("state_scope")
-    if scope:
+    if scope and (show_state or "all states searched" not in scope):
         print(f"  {scope}")
 
     warning = result.get("warning")

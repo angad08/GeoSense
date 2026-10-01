@@ -27,10 +27,10 @@ Passport verification in India needs each applicant assigned to a **police stati
 - `ps` (optional): the station the applicant typed, possibly a guess.
 - `district` (optional): the district the applicant typed, possibly a guess.
 
-**Output:** a table of up to 3 rows: rank, police station, district, an assessment label, and distance. Under the table go the state scope searched, plus any warning or note.
+**Output:** a table of up to 3 rows: rank, police station, district, a Confidence label, and distance. A State column is added only when every state was searched (no station, district or state to go on). Under the table go the state line (only when a state was named or every state was searched), plus any warning or note.
 
 ```
-#  Police Station   District        Assessment     Distance
+#  Police Station   District        Confidence     Distance
 1  BORABANDA        HYDERABAD       Very Likely    ~1.2 km
 2  SR NAGAR         HYDERABAD       Likely         ~2.9 km
 3  ...
@@ -41,7 +41,7 @@ Passport verification in India needs each applicant assigned to a **police stati
 
 **Hard guarantee: every station shown is a real row from the sheet.** Nothing is invented, not even by the AI. Any name the AI returns is re-validated against the sheet.
 
-The assessment labels (`common/output.py`) are **Guaranteed / Very Likely / Likely / Possible / Unknown**. They map from internal confidence levels VERY HIGH / HIGH / MEDIUM / LOW / NONE, and the same words are written to `LookupLogs` → `RESULT MATCH`. Codex briefly renamed them; they were restored so new log rows stay consistent with the existing ones. If they're ever changed, change both together and keep the log readable.
+The Confidence labels (`common/output.py`, column headed "Confidence" since 2026-10-01) are **Guaranteed / Very Likely / Likely / Possible / Unknown**. They map from internal confidence levels VERY HIGH / HIGH / MEDIUM / LOW / NONE, and the same words are written to `LookupLogs` → `RESULT MATCH`. Codex briefly renamed them; they were restored so new log rows stay consistent with the existing ones. If they're ever changed, change both together and keep the log readable.
 
 ---
 
@@ -164,7 +164,7 @@ Whether to keep v1 is an open question for the owner.
 
 After a lookup, the officer chooses which result row they used (or the top one is taken in one-shot mode). That record is appended to `LookupLogs`.
 
-**Limit:** only the chosen station is logged, not all three candidates and their distances. That makes the §1 success measure ("were the shown stations the true nearest?") impossible to reconstruct afterwards. The sheet's `MATCH` formula also compares names exactly, which is the wrong metric for §1. Both points are covered in CODEX_REVIEW.
+**Limit:** only the chosen station is logged, not all three candidates and their distances. (A SHOWN STATIONS column was tried on 2026-10-01 and removed the same day at the owner's request.) That makes the §1 success measure ("were the shown stations the true nearest?") impossible to reconstruct afterwards. The sheet's `MATCH` formula also compares names exactly, which is the wrong metric for §1. Both points are covered in CODEX_REVIEW.
 
 ---
 

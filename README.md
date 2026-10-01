@@ -97,7 +97,7 @@ The honest test needs production data, not fixtures — the same addresses throu
 $ python main.py --ps "Gachibowli"
 
 --------------------------------------------------
-  #  Police Station    District              Surety      Distance
+  #  Police Station    District              Confidence  Distance
 ---  ----------------  --------------------  ----------  ----------
   1  GACHIBOWLI        CYBERABAD-RANGAREDDY  Guaranteed  N/A
 --------------------------------------------------
@@ -111,7 +111,7 @@ $ python main.py --ps "Gachibowli"
 $ python main.py --address "6-31-1, Flat 101, Akhila Enclave, Old Bowenpally, Secunderabad, 500011"
 
 --------------------------------------------------
-  #  Police Station    District              Surety       Distance
+  #  Police Station    District              Confidence   Distance
 ---  ----------------  --------------------  -----------  ----------
   1  BOWENPALLY        MALKAJGIRI-HYDERABAD  Very Likely  N/A
 --------------------------------------------------
@@ -237,7 +237,7 @@ data/POLICE_STATION.xlsx             # fallback
 |---|---|---|
 | `DISTRICT` | ✅ | |
 | `POLICE STATION` | ✅ | May repeat across districts — see [Same name, different district](#same-name-different-district) |
-| `LAT` / `LNG` | — | Created and filled automatically on first use |
+| `LAT` / `LNG` | — | Station coordinates, filled by `scripts/build_ps_coords.py` |
 
 **`LookupLogs`** — the audit log, written one row per completed lookup.
 
@@ -293,14 +293,14 @@ v2 needs a coordinate for every police station. Rather than geocoding them on ev
 
 The rule is simply:
 
-- **Blank** → not geocoded yet → geocoded once, on demand, and written back
+- **Blank** → not geocoded yet → filled by `build_ps_coords.py` (below)
 - **Filled** → used directly, no API call
 
-So **adding a station to the Excel needs no rebuild step**. The first lookup that touches it geocodes it and saves the result; every lookup after that is free. Once a district is warm, a lookup that reaches the ranking stage makes exactly **one Geocoding call** — for the user's address. (An address that also needs its district inferred adds one AI call on top; a lookup answered by the free stages makes neither.)
+Lookups never geocode stations themselves. A lookup that reaches the ranking stage makes exactly **one Geocoding call** — for the user's address. (An address that also needs its district inferred adds one AI call on top; a lookup answered by the free stages makes neither.) A station with blank coordinates can still be matched by name, but is left out of distance ranking and named in a note.
 
-A station that fails to geocode is left blank, **named in a warning, and never silently dropped**. It is retried next run, so a transient network problem can't become a permanent hole. If one keeps failing, its name probably needs fixing in the Excel.
+A station that fails to geocode is left blank, **named in a warning, and never silently dropped**. It is retried on the next build run. If one keeps failing, see *Stations Google cannot find by their name* below.
 
-**Optional:** to pay the whole geocoding cost up front instead of spreading it across your first few lookups:
+**After adding stations to the Excel**, fill their coordinates:
 
 ```bash
 python scripts/build_ps_coords.py
@@ -398,7 +398,8 @@ GeoSense/
 ├── data/                        # Put your Excel here (not committed)
 │   └── station_search_names.csv #   Search names for hard-to-find stations (committed)
 ├── requirements.txt
-└── README.md
+├── README.md
+└── CHANGELOG.md                 # What changed, including Excel coordinate fixes
 ```
 
 ---
@@ -417,7 +418,7 @@ GeoSense/
 | `COL_LAT` / `COL_LNG` | `LAT` / `LNG` | Coordinate columns (created automatically) |
 | `COL_STATE` | `STATE` | Per-row state; station query is `{PS} Police Station, {DISTRICT}, {STATE}, India`. Blank → station skipped, never defaulted |
 | `SEARCH_ALIAS_FILE` | `data/station_search_names.csv` | Search names for stations Google cannot find by their Excel name — see [Station Coordinates](#station-coordinates-v2) |
-| `COORD_LAT_MIN/MAX`, `COORD_LNG_MIN/MAX` | `12.5–20.0`, `76.5–85.0` | TS+AP envelope; a geocoded station outside it is rejected, not written |
+| `COORD_LAT_MIN/MAX`, `COORD_LNG_MIN/MAX` | `6.0–37.6`, `68.0–97.5` | India's outer box; a geocoded station outside it is rejected, not written |
 | `SIBLING_MAX_KM` / `SIBLING_MIN_COUNT` | `35` / `3` | A geocoded station more than 35 km from every other station of its district **and** placed by Google in another district is a same-name village elsewhere — rejected. `python scripts/build_ps_coords.py --audit [--fix]` re-checks stored coordinates the same way |
 | `FUZZY_CUTOFF` | `80` | Minimum fuzzy score (0–100) to accept a match |
 | `LOCALITY_CUTOFF` | `86` | Stricter cutoff for address-locality scans |
