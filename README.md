@@ -247,7 +247,6 @@ This sheet is **shared**: the script writes some columns, you fill in the rest b
 |---|---|
 | `ADDRESS`, `PREDICTED PS`, `PREDICTED DISTRICT`, `RESULT LOOKUP`, `RESULT MATCH` | the script |
 | `FILE NO`, `ACTUAL PS KNOWN`, `STATUS`, `MATCH` | you — never touched by the script |
-| `SHOWN STATIONS` | the script — every station shown, in order, with district and distance (e.g. `1. BORABANDA (HYDERABAD) ~1.2 km \| 2. SR NAGAR (HYDERABAD) ~2.9 km`); `[shared point]` marks a station whose coordinate is shared with a differently named one. Added after the last column on first use, so you can later check whether the officer's station was offered at all, not only whether it was picked |
 
 `PREDICTED PS` holds the station name only, so it stays directly comparable to your hand-entered `ACTUAL PS KNOWN`; the district goes in its own `PREDICTED DISTRICT` column. If you decline to pick a result, the row is still logged with those cells left blank for you to complete. Anything to the right of the table is left alone, and if the sheet uses an Excel Table its range is extended so new rows stay inside it.
 

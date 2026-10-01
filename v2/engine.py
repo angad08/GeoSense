@@ -26,7 +26,7 @@ All distance ranking uses real coordinates from the Geocoding API.
 """
 
 from v2.config import (
-    COL_DISTRICT, COL_PS, TOP_N, FUZZY_CUTOFF,
+    COL_DISTRICT, COL_PS, COL_STATE, TOP_N, FUZZY_CUTOFF,
     DISTANCE_WARN_KM, AI_PROVIDER, AI_MODEL,
 )
 from common.matcher import (
@@ -489,6 +489,9 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
                                  key=lambda m: (m["distance_km"], m["police_station"],
                                                 m["district"]))
                 no_km   = len(measured) - len(with_km)
+                # All states searched, so each row says which state it is in.
+                states   = df[COL_STATE] if COL_STATE in df else [""] * len(df)
+                state_of = dict(zip(zip(df[COL_DISTRICT], df[COL_PS]), states))
                 if with_km:
                     near = with_km[:TOP_N]
                     out = {
@@ -500,6 +503,8 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
                             "rank":             i + 1,
                             "police_station":   m["police_station"],
                             "district":         m["district"],
+                            "state":            state_of.get((m["district"],
+                                                              m["police_station"]), ""),
                             "confidence":       "MEDIUM" if i == 0 else "LOW",
                             "distance":         _km_label(m["distance_km"]),
                             "resolved_address": "",

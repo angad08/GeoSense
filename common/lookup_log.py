@@ -31,11 +31,6 @@ disturbed:
      Case 3 (address only)   → "DISTRICT + POLICE STATION"
   RESULT MATCH  — the surety value of the chosen record, in plain words
                   (same wording shown in the output table).
-  SHOWN STATIONS — every station shown, in order:
-                  "1. BORABANDA (HYDERABAD) ~1.2 km | 2. SR NAGAR (...) ...".
-                  A station whose coordinate is shared with a differently
-                  named one is marked [shared point]. Appended after the last
-                  header the first time it is needed.
 """
 
 import openpyxl
@@ -43,7 +38,7 @@ import openpyxl
 from common.config import (
     EXCEL_FILE, LOG_SHEET_NAME, LOG_WRITE_COLS,
     LOG_COL_ADDRESS, LOG_COL_PRED_PS, LOG_COL_PRED_DIST,
-    LOG_COL_LOOKUP, LOG_COL_MATCH, LOG_COL_SHOWN,
+    LOG_COL_LOOKUP, LOG_COL_MATCH,
 )
 from common.output import SURETY_LABELS
 
@@ -128,7 +123,6 @@ def log_lookup(result, address, known_ps, known_district,
         LOG_COL_PRED_DIST: record.get("district", "") if record else "",
         LOG_COL_LOOKUP:    lookup_label,
         LOG_COL_MATCH:     match_label,
-        LOG_COL_SHOWN:     shown_summary(results),
     }
 
     try:
@@ -145,20 +139,6 @@ def log_lookup(result, address, known_ps, known_district,
         print(f"\n  [LOG] Saved to '{LOG_SHEET_NAME}': {lookup_label} | "
               f"no selection — PREDICTED PS, PREDICTED DISTRICT and RESULT MATCH "
               f"left blank for you to fill")
-
-
-def shown_summary(results):
-    """One readable cell listing every shown station, in rank order."""
-    parts = []
-    for r in results:
-        text = f"{r.get('rank', '')}. {r.get('police_station', '')} ({r.get('district', '')})"
-        distance = r.get("distance")
-        if distance and distance != "N/A":
-            text += f" {distance}"
-        if r.get("coordinate_unverified"):
-            text += " [shared point]"
-        parts.append(text)
-    return " | ".join(parts)
 
 
 def _header_columns(ws):
@@ -208,13 +188,6 @@ def _append_row(excel_path, values):
             f"{', '.join(missing)}. Found: {', '.join(sorted(cols))}. "
             f"Nothing was written — refusing to guess which column to use."
         )
-
-    # SHOWN STATIONS is optional: add its header right after the last named
-    # column the first time it is needed. Nothing existing moves.
-    if LOG_COL_SHOWN in values and LOG_COL_SHOWN.upper() not in cols:
-        new_col = max(cols.values()) + 1
-        ws.cell(row=1, column=new_col, value=LOG_COL_SHOWN)
-        cols[LOG_COL_SHOWN.upper()] = new_col
 
     # First free row, measured across the named columns only so that trailing
     # junk to the right cannot inflate it.

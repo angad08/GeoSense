@@ -41,15 +41,20 @@ def print_output(result):
             print(f"  [!] {result['warning']}")
         return
 
+    # State is shown only when the search covered every state (no station or
+    # district to go on); otherwise all rows are in the applicant's own state.
+    show_state = any(r.get("state") for r in result["results"])
+    headers = ["#", "Police Station", "District"] + (["State"] if show_state else []) \
+              + ["Confidence", "Distance"]
     rows = []
     for r in result["results"]:
         surety = SURETY_LABELS.get(r["confidence"], r["confidence"])
-        rows.append([r["rank"], r["police_station"], r["district"],
-                     r.get("state", ""), surety, r.get("distance", "N/A")])
+        rows.append([r["rank"], r["police_station"], r["district"]]
+                    + ([r.get("state", "")] if show_state else [])
+                    + [surety, r.get("distance", "N/A")])
 
     print(f"\n{sep}")
-    print(tabulate(rows, headers=["#", "Police Station", "District", "State",
-                                 "Assessment", "Distance"], tablefmt="simple"))
+    print(tabulate(rows, headers=headers, tablefmt="simple"))
     print(sep)
     print("  Compare the nearby candidates and their distances before selecting.")
     if result.get("method"):
