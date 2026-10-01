@@ -309,6 +309,15 @@ python scripts/build_ps_coords.py
 
 It fills every blank row in one pass and **skips rows that already have coordinates**, so it never overwrites values — including any you filled in by hand.
 
+**Stations sharing one point.** For small stations Google sometimes returns a bigger police building nearby, so several differently named stations end up on one coordinate and their distances are wrong. To move them to the village or town each is named after:
+
+```bash
+python scripts/build_ps_coords.py --restack --limit 20   # preview 20, nothing written
+python scripts/build_ps_coords.py --restack --fix        # all of them, saved
+```
+
+One Geocoding call per station. A move is saved only if Google returns a village / town whose name matches the station, in the row's state, near the rest of its district, and not on another station's point; otherwise the station keeps its current point. Back up the Excel and close it first.
+
 ---
 
 ## How It Works

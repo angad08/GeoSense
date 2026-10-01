@@ -27,7 +27,7 @@ from common.matcher import strip_ps_noise
 from v2.config import (
     TOP_N, EXCEL_FILE, SHEET_NAME, COL_DISTRICT, COL_PS, COL_STATE,
     COL_LAT, COL_LNG, GEOCODE_COUNTRY, STATE_MATCH_CUTOFF,
-    SIBLING_MAX_KM, SIBLING_MIN_COUNT,
+    SIBLING_MAX_KM, SIBLING_MIN_COUNT, STATION_PLACE_MATCH,
     COORD_LAT_MIN, COORD_LAT_MAX, COORD_LNG_MIN, COORD_LNG_MAX,
 )
 
@@ -467,6 +467,70 @@ def geocode_station(district, ps):
         return None
 
     return lat, lng
+
+
+# ── Re-placing stacked stations ───────────────────────────────────────────────
+# For a small station Google's "X Police Station" search often falls back to a
+# bigger police building nearby, so many stations end up on one point (e.g. 18
+# Madurai Rural stations on one coordinate). Such a station usually sits in the
+# village or town it is named after, so that place's point is a far better
+# location. Measured trial: 11 of 20 stacked stations moved 2–60 km to their own
+# village; the rest kept their point for a stated reason.
+
+# Result / component types that mean "a named village, town or neighbourhood".
+PLACE_TYPES = {
+    "locality", "sublocality", "sublocality_level_1", "sublocality_level_2",
+    "neighborhood", "administrative_area_level_4", "postal_town",
+}
+
+# Words that qualify a station but are not part of the place it is named after:
+# "ADILABAD II TOWN", "NANDYAL TALUKA", "BODI TRAFFIC", "MYDUKUR U G".
+_PLACE_QUALIFIERS = re.compile(
+    r"\b(?:I{1,3}|IV|\d)?\s*(?:TOWN|RURAL|TALUK|TALUKA|URBAN|NORTH|SOUTH|EAST|WEST|"
+    r"NEW|OLD|TRAFFIC|AWPS|U G|L AND O)\b")
+
+
+def station_place_name(ps):
+    """The village / town a station is named after: "ADILABAD II TOWN" -> "ADILABAD"."""
+    name  = clean_station_name(ps)
+    place = " ".join(_PLACE_QUALIFIERS.sub(" ", name).split())
+    return place or name
+
+
+def geocode_station_place(district, ps, coords):
+    """
+    ((lat, lng), detail) for the village / town station `ps` is named after, or
+    (None, reason). Accepted only if the result IS a village / town /
+    neighbourhood whose name matches the station's place name, lies in the
+    row's STATE, is not isolated from its district, and differs from the
+    stored point. One Geocoding call; nothing is written here.
+    """
+    key   = (str(district).strip().upper(), str(ps).strip().upper())
+    state = _state_cache.get(key, "")
+    if not state:
+        return None, "STATE is blank"
+    place = station_place_name(ps)
+    top   = _geocode_top(f"{place}, {district}, {state}, India")
+    if not top:
+        return None, "no result"
+
+    (lat, lng), _ = _coords_and_formatted(top)
+    if not set(top.get("types", [])) & PLACE_TYPES:
+        return None, "Google found no village or town of that name"
+    names = [c["long_name"] for c in top.get("address_components", [])
+             if set(c.get("types", [])) & PLACE_TYPES]
+    target = _distinct_name(place)
+    if not any(fuzz.ratio(target, _distinct_name(n)) >= STATION_PLACE_MATCH for n in names):
+        return None, f"place name does not match ({', '.join(names[:2]) or 'none'})"
+    if not coords_in_envelope(lat, lng) or not same_state(state, result_state(top)):
+        return None, "outside the row's state"
+    if isolated_from_siblings(key, lat, lng, coords):
+        return None, "far from every other station in its district"
+    old = coords.get(key)
+    if old and geodesic_distance((lat, lng), old) < 0.2:
+        return None, "already at its own town"
+    moved = geodesic_distance((lat, lng), old) if old else 0
+    return (lat, lng), f"{names[0]}, moved {moved:.1f} km"
 
 
 # ── Sibling check ─────────────────────────────────────────────────────────────

@@ -71,6 +71,13 @@ COORD_LNG_MAX = 97.5
 SIBLING_MAX_KM    = 35
 SIBLING_MIN_COUNT = 3
 
+# scripts/build_ps_coords.py --restack moves a station off a point it shares
+# with differently named stations, to the village / town it is named after.
+# The place Google returns must match the station's place name this closely
+# (0–100, on letters only): "GAJAPATINAGARAM" ~ "GAJAPATHINAGARAM" passes,
+# "RAJAMAHENDRAVARAM" for RAJAHMUNDRY does not, and the station stays put.
+STATION_PLACE_MATCH = 85
+
 # ── State Detection ────────────────────────────────────────────────────────────
 # common/state_filter.py narrows the search to the state an address names. The
 # state list comes from the STATE column; this cutoff (0–100) only decides how

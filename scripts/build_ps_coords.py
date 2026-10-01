@@ -33,6 +33,12 @@ Usage (from the project root, with the Excel file CLOSED):
     python scripts/build_ps_coords.py --dry-run
         Prints the query each unresolved station would get, plus a count per
         state. No API calls, no API key needed, nothing written.
+
+    python scripts/build_ps_coords.py --restack [--limit N] [--fix]
+        Stations sharing a point with differently named stations: look up the
+        village / town each is named after and show where it would move (one
+        Geocoding call per station). With --fix the moves are saved. A station
+        whose place cannot be confirmed keeps its current point.
 """
 
 import argparse
@@ -48,7 +54,7 @@ from common.config import EXCEL_FILE, SHEET_NAME
 from v2.geopy_distance import (
     _load_coords_cache, _state_cache, _write_coords, _clear_coords,
     geocode_station, station_geocode_query, audit_station,
-    coordinate_collisions,
+    coordinate_collisions, geocode_station_place,
 )
 
 NO_STATE = "(STATE blank - would be skipped)"
@@ -92,6 +98,58 @@ def audit(cache, fix):
         print("Re-run with --audit --fix to clear them.")
 
 
+def restack(cache, fix, limit=0):
+    """
+    Move stations off shared points to their own village / town. Preview unless
+    `fix`. A move is kept only if, with the whole batch applied, the new point
+    is not shared with a differently named station; otherwise the station keeps
+    its current point. Nothing is ever cleared here.
+    """
+    stacked = sorted(coordinate_collisions(cache))
+    print(f"Stacked  : {len(stacked)} station(s) share a point with a differently "
+          f"named station")
+    if limit > 0:
+        stacked = stacked[:limit]
+        print(f"--limit {limit}: only the first {len(stacked)} are checked.")
+    print()
+
+    moves, width = {}, len(str(len(stacked)))
+    for n, (district, ps) in enumerate(stacked, start=1):
+        new, detail = geocode_station_place(district, ps, cache)
+        tag = f"  [{n:>{width}}/{len(stacked)}]"
+        if new:
+            moves[(district, ps)] = new
+            print(f"{tag} MOVE  {ps} ({district}) -> {detail}", flush=True)
+        else:
+            print(f"{tag} KEEP  {ps} ({district}) - {detail}", flush=True)
+
+    # Two moves may land on one town point (ADILABAD I TOWN / II TOWN). Drop
+    # every move that still collides, until the batch is clean.
+    while True:
+        proposed = dict(cache)
+        proposed.update(moves)
+        clash = coordinate_collisions(proposed) & set(moves)
+        if not clash:
+            break
+        for key in sorted(clash):
+            print(f"  KEEP  {key[1]} ({key[0]}) - its town point is shared with "
+                  "another station", flush=True)
+            moves.pop(key)
+
+    after = len(coordinate_collisions(proposed))
+    print()
+    print(f"Would move : {len(moves)}")
+    print(f"Stacked    : {len(coordinate_collisions(cache))} before -> {after} after")
+    if not moves:
+        return
+    if fix:
+        _write_coords([(d, p, la, ln) for (d, p), (la, ln) in moves.items()])
+    else:
+        print()
+        print("Preview only - nothing written. Re-run with --fix to save "
+              "(close the Excel first).")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Fill missing station LAT/LNG in the PoliceStation sheet.")
@@ -103,7 +161,12 @@ def main():
                              "far from their district and report coordinate stacks; "
                              "isolated rows may require API calls")
     parser.add_argument("--fix", action="store_true",
-                        help="with --audit: clear the suspect coordinates")
+                        help="with --audit: clear the suspect coordinates; "
+                             "with --restack: save the moves")
+    parser.add_argument("--restack", action="store_true",
+                        help="move stations that share a point with differently "
+                             "named stations to their own village / town "
+                             "(one Geocoding call each; preview unless --fix)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the geocode queries and per-state counts; "
                              "no API calls, no writes")
@@ -118,6 +181,10 @@ def main():
 
     if args.audit:
         audit(cache, args.fix)
+        return
+
+    if args.restack:
+        restack(cache, args.fix, args.limit)
         return
 
     if not missing:

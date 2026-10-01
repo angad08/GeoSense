@@ -116,6 +116,51 @@ class CoordinateCheckTests(unittest.TestCase):
         self.assertGreater(far, 200)
 
 
+class RestackTests(unittest.TestCase):
+    """Moving a stacked station to its own village (Geocoding is mocked)."""
+
+    COORDS = {("MADURAI RURAL", f"S{i}"): (9.9 + i * 0.05, 78.1) for i in range(4)}
+
+    def _top(self, name, lat, lng, types=("locality", "political"), state="Tamil Nadu"):
+        return {"types": list(types), "formatted_address": f"{name}, {state}",
+                "geometry": {"location": {"lat": lat, "lng": lng}},
+                "address_components": [
+                    {"long_name": name, "types": list(types)},
+                    {"long_name": state, "types": ["administrative_area_level_1"]}]}
+
+    def _run(self, ps, top, old=(9.925, 78.12)):
+        coords = dict(self.COORDS)
+        coords[("MADURAI RURAL", ps)] = old
+        with patch.object(geo, "_geocode_top", return_value=top), \
+             patch.dict(geo._state_cache, {("MADURAI RURAL", ps): "TAMIL NADU"}):
+            return geo.geocode_station_place("MADURAI RURAL", ps, coords)
+
+    def test_place_name_drops_station_qualifiers(self):
+        self.assertEqual(geo.station_place_name("ADILABAD II TOWN"), "ADILABAD")
+        self.assertEqual(geo.station_place_name("NANDYAL TALUKA"), "NANDYAL")
+        self.assertEqual(geo.station_place_name("K-4 ANNANAGAR"), "ANNANAGAR")
+        self.assertEqual(geo.station_place_name("TENKASI AWPS"), "TENKASI")
+
+    def test_moves_to_its_own_village(self):
+        new, detail = self._run("MELUR", self._top("Melur", 10.03, 78.34))
+        self.assertEqual(new, (10.03, 78.34))
+        self.assertIn("Melur", detail)
+
+    def test_keeps_point_when_place_name_differs(self):
+        new, _ = self._run("RAJAHMUNDRY III TOWN", self._top("Rajamahendravaram", 10.0, 78.2))
+        self.assertIsNone(new)
+
+    def test_keeps_point_for_a_shop_or_other_non_place(self):
+        new, _ = self._run("MELUR", self._top("Melur", 10.03, 78.34,
+                                              types=("clothing_store", "establishment")))
+        self.assertIsNone(new)
+
+    def test_keeps_point_for_wrong_state_or_far_village(self):
+        self.assertIsNone(self._run("MELUR", self._top("Melur", 10.03, 78.34,
+                                                       state="Kerala"))[0])
+        self.assertIsNone(self._run("MELUR", self._top("Melur", 12.9, 79.1))[0])
+
+
 class RelistedStationTests(unittest.TestCase):
     def _result(self):
         return {"case": 3, "results": [
