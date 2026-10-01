@@ -138,10 +138,12 @@ Follow the prompts:
   Known District (optional) :
 ```
 
-Results (real output — this address resolves from the Excel alone, no API call):
+Results (real output — the station is read from the Excel, no AI call; v2 also
+geocodes the address once to check the distance, and `N/A` means that check was
+unavailable):
 ```
 --------------------------------------------------
-  #  Police Station    District              Surety       Distance
+  #  Police Station    District              Confidence   Distance
 ---  ----------------  --------------------  -----------  ----------
   1  BOWENPALLY        MALKAJGIRI-HYDERABAD  Very Likely  N/A
 --------------------------------------------------

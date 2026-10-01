@@ -26,6 +26,16 @@ cannot show them.
   only the chosen station. Old SHOWN STATIONS cells in the Excel are left as
   they are; delete the column by hand if wanted.
 
+### Docs
+
+- README, ARCHITECTURE, SETUP and QUICKSTART brought in line with the code:
+  v2's address text match (Case 3a) makes one geocode of the address, so it
+  is "no AI call", not "no API call"; v2 differs from v1 in more than ranking
+  (distance check on text matches, Case 2 pin, all-states nearest search);
+  the `STATE` column's role is documented; station coordinates come only
+  from `build_ps_coords.py`, never from lookups. Old `Surety` headers in
+  examples now read `Confidence`.
+
 ### Station coordinates
 
 - **Search names** — `data/station_search_names.csv` (DISTRICT, POLICE STATION,

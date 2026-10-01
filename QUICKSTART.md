@@ -28,7 +28,7 @@ python main.py --ps "Gachibowli"
 
 ```text
 --------------------------------------------------
-  #  Police Station    District              Surety      Distance
+  #  Police Station    District              Confidence  Distance
 ---  ----------------  --------------------  ----------  ----------
   1  GACHIBOWLI        CYBERABAD-RANGAREDDY  Guaranteed  N/A
 --------------------------------------------------

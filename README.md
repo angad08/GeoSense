@@ -77,14 +77,20 @@ The lookup key is therefore **(district, station)**, never the station name alon
 
 - A name that repeats is **never resolved by spreadsheet row order** — which row Excel happens to list first has no bearing on the answer.
 - Given a district, the matching record is selected.
-- Given only an address, the district is often already in the text (*"…NAWABPET, POMAL, **MAHABUBNAGAR**…"*) and resolves it for free — no API call, since choosing between records already in hand is a selection, not an inference.
+- Given only an address, the district is often already in the text (*"…NAWABPET, POMAL, **MAHABUBNAGAR**…"*) and resolves it with no AI call, since choosing between records already in hand is a selection, not an inference. (v2 still makes one Geocoding call for the address, to order same-name matches by distance and flag one that is implausibly far.)
 - Otherwise **every valid record is shown and the user picks.** Nothing is auto-selected.
 
 This is the kind of defect that produces no error and no warning — just a quietly wrong district on a fraction of lookups, discoverable only by auditing. Treating the key as composite makes it structurally impossible.
 
 ## Two Ranking Methods, and Why v2 Is Default
 
-The ranking stage was built twice, deliberately. Everything else — standardisation, matching, routing, output, logging — is shared code in `common/`, so the ranking method is the **only** variable between the two versions.
+The ranking stage was built twice, deliberately. Standardisation, matching, state filtering, output and logging are shared code in `common/`. The ranking method is the main difference, but not the only one. v2 also:
+
+- checks address text matches by distance (Case 3a), ordering them nearest-first and downgrading one that is far away;
+- pins a station named in the address at rank 1 when a district is given (Case 2);
+- ranks the nearest stations across all states when the address names no state and the text matches nothing (Case 3n).
+
+v1 does none of these.
 
 | | **v1** | **v2** (default) |
 |---|---|---|
@@ -95,7 +101,7 @@ The ranking stage was built twice, deliberately. Everything else — standardisa
 
 **v2 is the default on properties that can be checked without a benchmark:** its distance is reproducible from the stored coordinates, explainable after the fact, identical on every re-run of the same input, and free to recompute once coordinates are saved. An estimate offers none of those regardless of how accurate it is. v1 remains the fallback for when no Maps key is available.
 
-**Which one ranks *better* is not yet measured, and this repo does not claim it.** The regression harness runs with the paid stages mocked, and on its current cases the free text scan resolves every address before ranking is reached — so neither ranking method is exercised (see [How It's Measured](#how-its-measured)). What the harness does establish is that the shared layer really is shared, which is the precondition for a fair comparison later: any difference that shows up *must* come from the ranking method, because nothing else differs.
+**Which one ranks *better* is not yet measured, and this repo does not claim it.** The regression harness runs with the paid stages mocked, and on its current cases the free text scan resolves every address before ranking is reached — so neither ranking method is exercised (see [How It's Measured](#how-its-measured)). What the harness does establish is that the shared layer really is shared, which is the precondition for a fair comparison later. A fair comparison still has to account for v2's extra steps listed above, not only its ranking.
 
 The honest test needs production data, not fixtures — the same addresses through both versions with keys live, scored against the hand-labelled `ACTUAL PS KNOWN` column that `LookupLogs` is accumulating. Until there are enough rows for that, "v2 is more accurate" would be an assumption wearing a number.
 
@@ -115,7 +121,7 @@ $ python main.py --ps "Gachibowli"
   [LOG] Saved to 'LookupLogs': GACHIBOWLI | CYBERABAD-RANGAREDDY | DISTRICT | Guaranteed
 ```
 
-**Only a messy address** → the locality scan reads the station area straight out of the text — still no API call:
+**Only a messy address** → the locality scan reads the station area straight out of the text — no AI call. v2 then makes one Geocoding call for the address to check the match by distance; `N/A` below means that check was unavailable, and the text match stands:
 
 ```text
 $ python main.py --address "6-31-1, Flat 101, Akhila Enclave, Old Bowenpally, Secunderabad, 500011"
@@ -247,6 +253,7 @@ data/POLICE_STATION.xlsx             # fallback
 |---|---|---|
 | `DISTRICT` | ✅ | |
 | `POLICE STATION` | ✅ | May repeat across districts — see [Same name, different district](#same-name-different-district) |
+| `STATE` | Recommended | Used to search only the state an address names (otherwise all states), and to build each station's geocode query. A station with a blank `STATE` is never geocoded, and a missing column means every state is always searched |
 | `LAT` / `LNG` | — | Station coordinates, filled by `scripts/build_ps_coords.py` |
 
 **`LookupLogs`** — the audit log, written one row per completed lookup.
@@ -288,7 +295,7 @@ python main.py --address "Madhapur Hyderabad"                # address → both
 | `--excel` | Override the Excel file path |
 | `--interactive` | Force interactive prompt even with flags |
 
-> **Close the workbook in Excel before running.** v2 writes station coordinates and the lookup log back into it; Windows blocks writes to an open file. Results stay correct either way, but nothing will be saved.
+> **Close the workbook in Excel before running.** Lookups write the lookup log back into it, and `scripts/build_ps_coords.py` writes station coordinates; Windows blocks writes to an open file. Results stay correct either way, but nothing will be saved.
 
 ---
 
@@ -447,11 +454,11 @@ GeoSense/
 | `Missing GOOGLE_MAPS_API_KEY` | Set it, or run `python main.py v1` instead |
 | `[ERROR] <package> not installed` | Install the package for your chosen `AI_PROVIDER` |
 | `[ERROR] <PROVIDER>_API_KEY not set` | Set the key matching `AI_PROVIDER` in `common/config.py` |
-| `[WARN] Could not save coordinates` | The workbook is open in Excel — close it and re-run |
+| `[WARN] Could not save coordinates` | The workbook is open in Excel — close it and re-run `scripts/build_ps_coords.py` |
 | `Sheet 'LookupLogs' not found` | Add the sheet, or point `LOG_SHEET_NAME` at the one you use |
 | `missing expected column(s): …` | Add the named header to `LookupLogs`. Nothing is written until it exists — deliberately, so a value never lands in the wrong column |
 | `No module named geopy` | `pip install -r requirements.txt` |
-| First lookup in a district is slow | Expected — it is geocoding that district's stations once |
+| Stations left out of distance ranking | They have no coordinates yet. Lookups never geocode stations — run `python scripts/build_ps_coords.py` |
 
 ---
 

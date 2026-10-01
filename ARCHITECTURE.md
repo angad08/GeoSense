@@ -80,16 +80,22 @@ against the Excel again — anything not in your data is discarded. The result:
 ```
 Input: (address, district, optional) → common/loader loads Excel
 
-Step 1: Text Match (same as v1)
-  └─ Return if fuzzy or locality match found — no API call at all
+Step 1: Text Match (same matcher as v1)
+  ├─ Station typed (Case 1) → fuzzy match, no API call at all
+  ├─ Address names a station (Case 3a) → no AI; one geocode of the address
+  │  orders same-name hits nearest-first and flags one implausibly far
+  ├─ District given (Case 2) → a station named in the address is pinned
+  │  at rank 1, the rest ranked by distance
+  └─ No state named, no text match (Case 3n) → nearest stations across
+     all states by distance, one geocode, no AI
 
 Step 2: AI District Inference (v2/ai_engine.py) — ONLY if text matching failed
   └─ AI infers the district from the address text (Excel list only,
      no invented names) — this is v2's single AI job
 
 Step 3: Distance Ranking (v2/geopy_distance.py)
-  ├─ Station coords read from the Excel's LAT/LNG columns (geocoded once,
-  │  on demand, and written back — no rebuild step)
+  ├─ Station coords read from the Excel's LAT/LNG columns, filled by
+  │  scripts/build_ps_coords.py — lookups never geocode stations
   ├─ Google Maps Geocoding API: input address → (lat, lng) — the 1 live call
   ├─ WGS-84 geodesic distance to each station, rank ascending
   └─ If the input address will not geocode → the district's stations are
@@ -105,10 +111,10 @@ Step 4: Format & Log
 
 **Tradeoff**:
 - ✓ Precise real distances (WGS-84, Karney's algorithm)
-- ✓ One geocode per station ever; one API call per warm lookup
+- ✓ Stations geocoded once by the build script; one API call per ranked lookup
 - ✓ AI touched only when the Excel text scan can't answer
 - ✗ Needs a Google Maps API key for the distance rung
-- ✗ First lookup in a cold district geocodes that district's stations once
+- ✗ Stations without stored coordinates are left out of ranking until the build script fills them
 
 ## Module Dependencies
 
@@ -177,7 +183,7 @@ Output: GACHIBOWLI | CYBERABAD-RANGAREDDY | Guaranteed
 Log: appended to LookupLogs
 ```
 
-### Case 3a — address names a station area (no API call)
+### Case 3a — address names a station area (no AI; v2 adds one geocode to check distance)
 ```
 Input: --address "6-31-1, Akhila Enclave, Old Bowenpally, Secunderabad, 500011"
     ↓
@@ -190,7 +196,7 @@ Output: BOWENPALLY | MALKAJGIRI-HYDERABAD | Very Likely
 Log: appended to LookupLogs
 ```
 
-### Case 2 — district known, address ranked by distance (1 API call when warm)
+### Case 2 — district known, address ranked by distance (1 geocode of the address)
 ```
 Input: --district "Malkajgiri-Rangareddy" --address "<full address>"
     ↓
