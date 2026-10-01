@@ -1,14 +1,32 @@
-﻿"""GeoSense v2 ranking.
+"""
+GeoSense — engine.py
+---------------------
+Main decision logic. Routes each query to the correct case.
 
-An address lookup geocodes once and displays the three nearest located rows
-within the detected state. Supplied station and district names are hints, not
-filters. Without an address, the typed-name lookup remains available.
-The former text/AI address ladder below is retained temporarily but is not
-called for address lookups.
+The ladder — each rung only runs if the one before it could not answer,
+so cost is only incurred when it has to be:
+
+    fuzzy match  →  locality scan  →  geocoding  →  AI
+    (free)          (free)            (paid)        (paid, last resort)
+
+  Case 1  — Known PS       → fuzzy match Excel → done (no geocoding, no AI)
+  Case 2  — Known District → filter Excel → geocode → rank by real distance
+  Case 3a — Address names a PS       → Excel only, no geocoding, no AI
+  Case 3b — Address names a district → geocode → rank by real distance, no AI
+  Case 3n — No state named, 3a/3b empty → nearest stations, all states (1 geocode)
+  Case 3c — Address unmatched        → AI infers district → geocode → rank
+
+Before any case runs, find_best_match() narrows the stations to the state the
+address names (common/state_filter.py). In 3a the station named in the address
+has priority, and one geocode of the address verifies it by distance.
+  Case 0  — Nothing worked → empty result
+
+AI is only ever called in Case 3c, and only to infer a district from text.
+All distance ranking uses real coordinates from the Geocoding API.
 """
 
 from v2.config import (
-    COL_DISTRICT, COL_PS, COL_STATE, TOP_N, FUZZY_CUTOFF,
+    COL_DISTRICT, COL_PS, TOP_N, FUZZY_CUTOFF,
     DISTANCE_WARN_KM, AI_PROVIDER, AI_MODEL,
 )
 from common.matcher import (
@@ -20,18 +38,25 @@ from common.matcher import (
 )
 from common.state_filter import filter_by_state
 from v2.ai_engine import ai_infer_district
-from v2.geopy_distance import rank_ps_by_distance, measure_from_address, same_state
+from v2.geopy_distance import rank_ps_by_distance, measure_from_address
 
 
 def find_best_match(address, known_ps, known_district, df, ai_client):
-    """Rank address candidates within its validated state, or resolve a name."""
+    """
+    Narrow the stations to the state the address names, then run the ladder.
+
+    State first, always: station names repeat across states but a person lives
+    in one, so a Telangana address is never offered an Andhra Pradesh station.
+    With no single state in the address, every state is searched, as before.
+    The ladder itself (_find_best_match) is unchanged; it simply sees fewer rows.
+    The returned dict gains `state_scope`: which stations were searched, and why.
+
+    Shown stations whose coordinate is shared with a differently named station
+    are marked LOW with a warning: the distance cannot tell those apart.
+    """
     scoped_df, state_scope, state = filter_by_state(address, df)
-    if address.strip():
-        result = _nearest_address_matches(address, known_ps, known_district,
-                                          scoped_df, expected_state=state)
-    else:
-        result = _find_best_match(address, known_ps, known_district, scoped_df,
-                                  ai_client, state_named=False)
+    result = _find_best_match(address, known_ps, known_district, scoped_df, ai_client,
+                              state_named=state is not None)
     uncertain = [r for r in result.get("results", [])
                  if r.get("coordinate_unverified")]
     if uncertain:
@@ -41,101 +66,10 @@ def find_best_match(address, known_ps, known_district, df, ai_client):
             result["confidence"] = "LOW"
         message = (f"{len(uncertain)} shown station coordinate(s) are shared with "
                    "a differently named station. Distances cannot distinguish "
-                   "them; verify the station locations before selecting.")
+                   "them; confirm jurisdiction independently.")
         result["warning"] = (result.get("warning", "") + " " + message).strip()
-    result["state_scope"] = result.get("state_scope", state_scope)
+    result["state_scope"] = state_scope
     return result
-
-
-def _nearest_address_matches(address, known_ps, known_district, df,
-                             expected_state=None):
-    """Show the three nearest located source rows for an address.
-
-    Applicant-provided station and district names are hints, never hard
-    filters. A single validated address geocode feeds every distance.
-    """
-    stations = list(zip(df[COL_STATE], df[COL_DISTRICT], df[COL_PS]))
-    measured = measure_from_address(address, stations,
-                                    expected_state=expected_state)
-    if measured is None:
-        return {
-            "case": 0,
-            "confidence": "NONE",
-            "method": "Address location could not be verified",
-            "results": [],
-            "warning": "Check the address and PIN before requesting nearest stations.",
-            "state_scope": "State: address geocode unavailable",
-        }
-
-    if expected_state is None:
-        google_state = getattr(measured, "address_state", "")
-        matching_states = {str(state).strip().upper() for state in df[COL_STATE]
-                           if google_state and same_state(state, google_state)}
-        if len(matching_states) != 1:
-            return {
-                "case": 0,
-                "confidence": "NONE",
-                "method": "Address state could not be matched to one workbook state",
-                "results": [],
-                "warning": "Check the address and its state before requesting nearest stations.",
-                "state_scope": "State: could not verify one workbook state",
-            }
-        selected_state = matching_states.pop()
-        measured = [row for row in measured
-                    if str(row.get("state", "")).strip().upper() == selected_state]
-        state_scope = f"State: {selected_state} (from address geocode)"
-    else:
-        state_scope = f"State: {expected_state} (named in address)"
-
-    located = sorted((r for r in measured if r["distance_km"] is not None),
-                     key=lambda r: (r["distance_km"], r["police_station"],
-                                    r["district"]))
-    if not located:
-        return {
-            "case": 0,
-            "confidence": "NONE",
-            "method": "No station in the search scope has a verified coordinate",
-            "results": [],
-            "warning": "Run explicit coordinate maintenance before using distance ranking.",
-            "state_scope": state_scope,
-        }
-
-    distinct = []
-    seen_sites = set()
-    for row in located:
-        site = (row.get("state"), row["police_station"],
-                row.get("station_coordinates"))
-        if site in seen_sites:
-            continue  # same station listed under an old and a new district
-        seen_sites.add(site)
-        distinct.append(row)
-
-    results = [{
-        "rank": i + 1,
-        "police_station": row["police_station"],
-        "district": row["district"],
-        "state": row.get("state", ""),
-        "confidence": "MEDIUM",
-        "distance": _km_label(row["distance_km"]),
-        "distance_km": row["distance_km"],
-        "coordinate_unverified": row.get("coordinate_unverified", False),
-    } for i, row in enumerate(distinct[:TOP_N])]
-
-    method = "Nearest located stations by geodesic distance"
-    if known_ps.strip() or known_district.strip():
-        method += " | supplied PS/district treated as hints"
-    out = {"case": 3, "confidence": "MEDIUM", "method": method,
-           "results": results, "state_scope": state_scope}
-    missing = len(measured) - len(located)
-    if missing:
-        out["note"] = (f"{missing} station(s) have no coordinates and were "
-                       "excluded from distance ranking.")
-    if results[0]["distance_km"] > DISTANCE_WARN_KM:
-        out["warning"] = (
-            f"Nearest stored station is {results[0]['distance']} away; "
-            "check whether the address geocoded to the intended place."
-        )
-    return out
 
 
 def _km_label(km):

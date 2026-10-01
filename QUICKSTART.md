@@ -1,5 +1,7 @@
 # Quick start
 
+> **Note (2026-10-01):** the lookup flow has been restored to the original ladder (fuzzy → locality scan → geocode/distance → AI). Parts of this page still describe a short-lived "address-first nearest-three" version and are out of date until the original page is restored. **The accurate description is [GEOSENSE_EXPLAINED.md](GEOSENSE_EXPLAINED.md).**
+
 GeoSense v2 displays the three nearest located police-station rows for an address. A guessed station or district supplied with the address does not restrict the search.
 
 1. Close `data/POLICE_STATION.xlsx` in Excel.

@@ -1,6 +1,6 @@
 # GeoSense — What It Is and How It Works
 
-**For:** Codex, taking over the project · **Written by:** Claude Code (original builder) · **As of:** 2026-10-01, after Codex's first safety edits
+**For:** Codex, taking over the project · **Written by:** Claude Code (original builder) · **As of:** 2026-10-01, after the original ladder was restored (git commit after `bdb9634`)
 **Companion docs:** `CODEX_BRIEF.md` (open issues and constraints), `CODEX_REVIEW.md` (your review), `README.md`, `ARCHITECTURE.md`
 
 ---
@@ -30,9 +30,9 @@ Passport verification in India needs each applicant assigned to a **police stati
 **Output:** a table of up to 3 rows: rank, police station, district, an assessment label, and distance. Under the table go the state scope searched, plus any warning or note.
 
 ```
-#  Police Station   District        Assessment            Distance
-1  BORABANDA        HYDERABAD       Lead — verify         ~1.2 km
-2  SR NAGAR         HYDERABAD       Possible — verify     ~2.9 km
+#  Police Station   District        Assessment     Distance
+1  BORABANDA        HYDERABAD       Very Likely    ~1.2 km
+2  SR NAGAR         HYDERABAD       Likely         ~2.9 km
 3  ...
   Compare the nearby candidates and their distances before selecting.
   State: TELANGANA (named in address) — only TELANGANA stations searched
@@ -41,7 +41,7 @@ Passport verification in India needs each applicant assigned to a **police stati
 
 **Hard guarantee: every station shown is a real row from the sheet.** Nothing is invented, not even by the AI. Any name the AI returns is re-validated against the sheet.
 
-The assessment labels (`common/output.py`, renamed by Codex) are "Strong lead — verify", "Lead — verify", "Possible — verify", "Uncertain — review" and "No suggestion". They map from internal confidence levels VERY HIGH / HIGH / MEDIUM / LOW / NONE.
+The assessment labels (`common/output.py`) are **Guaranteed / Very Likely / Likely / Possible / Unknown**. They map from internal confidence levels VERY HIGH / HIGH / MEDIUM / LOW / NONE, and the same words are written to `LookupLogs` → `RESULT MATCH`. Codex briefly renamed them; they were restored so new log rows stay consistent with the existing ones. If they're ever changed, change both together and keep the log readable.
 
 ---
 
@@ -127,7 +127,7 @@ Any shown station whose coordinate is shared with a **differently named** statio
 
 Distances are geodesic: `geopy.distance.geodesic`, WGS-84 ellipsoid. They run from the geocoded address to each station's stored `LAT`/`LNG`. **Every lookup makes at most one live address geocode.** Station coordinates are geocoded **once** and stored in the sheet; there's no cache file.
 
-**Address geocode** (`geocode_address`): Google Geocoding API with `components={"country": "IN"}` and `language="en"`. Codex's edits now reject an area-centre result, or one whose PIN contradicts the PIN in the address.
+**Address geocode** (`geocode_address`): Google Geocoding API with `components={"country": "IN"}` and `language="en"`. Google's best result is **accepted as-is**. Codex briefly made it reject results whose PIN differed from the address PIN, or that were only area-level. On real lookups that returned **no answer at all** for 3 of 26 addresses (one was an exact street match in the neighbouring PIN), so it was reverted. Doubts about the address location are handled by the ladder's warnings, never by discarding the answer.
 
 **Station geocode** (`geocode_station`, used by `scripts/build_ps_coords.py`):
 1. Query `"{clean name} Police Station, {DISTRICT}, {STATE}, India"`. `clean_station_name()` strips codes like `K-4 `, the `P.S` suffix and stray dots; the sheet itself is untouched. A row with a blank STATE is skipped, never defaulted.
@@ -202,10 +202,9 @@ Station geocoding is a one-time bulk cost (about 3,000 calls so far). Blank stat
 
 ## 10. Testing
 
-- **`tests/validate_test_cases.py`:** 22 checks covering real Telangana addresses, v1/v2 parity, duplicates, state filtering and distance rules. Google and the AI are mocked. **Currently ALL GREEN.**
-- **`tests/test_safety.py`:** Codex's 6 tests covering the TN alias, the stack detector, the address-geocode guards and logging. **Currently 6 passed.**
-
-Claude ran both after Codex's edits, because Python wasn't on PATH in Codex's environment.
+- **`tests/validate_test_cases.py`:** 22 checks covering real Telangana addresses, v1/v2 parity, duplicates, state filtering and distance rules. Google and the AI are mocked. **This defines the expected behaviour and must stay ALL GREEN.**
+- **`tests/test_safety.py`:** 7 tests covering the TN alias, the stack detector, the neighbouring-PIN acceptance, the no-retry of blank stations, the stateful coordinate lookup, collision-safe writes and no-result logging. **7 passed.**
+- **Real-lookup check:** run the 26 officer-labelled lookups in `LookupLogs` through `find_best_match` (address only) and report: empty answers, officer's station in the top 1 and in the top 3. **Restored baseline: 0 empty, top-1 = 7, top-3 = 11.** No change may make these worse. This costs about 26 Geocoding calls plus a few AI calls; print counts only, never the addresses.
 
 **Gaps:**
 - the real-address cases are Telangana-only;
@@ -224,3 +223,20 @@ Claude ran both after Codex's edits, because Python wasn't on PATH in Codex's en
 6. **Paid calls:** trial small, show the owner, then run in bulk. Back up the Excel before any bulk write.
 7. **Keep the flow.** The ladder and case structure work. Improve inside them, don't redesign.
 8. **Version control:** the folder is still **not a git repo**. Initialise it and commit a baseline before further edits, now that two agents are changing code.
+
+---
+
+## 12. History: the address-first experiment (2026-10-01)
+
+Codex replaced the ladder with "geocode the address → show the 3 nearest in the state", ignoring the address text and the typed PS/district. It was tested against the 26 real lookups:
+
+| | Restored ladder | Address-first |
+|---|---|---|
+| Empty answers | **0** | 3 |
+| Officer's station in top 3 | 11 | 16 |
+| Officer's station #1 | 7 | 10 |
+| Fewer than 3 stations shown | 13 | 0 |
+
+**The owner chose the ladder:** it worked well, and no lookup may return nothing. The address-first code is preserved in git commit `bdb9634`.
+
+Its strengths ("always show 3", for example) may come back **only as additions inside the ladder**: proposed first, measured on the real lookups, and approved by the owner. They must never replace the ladder.

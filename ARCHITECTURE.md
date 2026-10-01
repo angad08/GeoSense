@@ -1,5 +1,7 @@
 # GeoSense architecture
 
+> **Note (2026-10-01):** the lookup flow has been restored to the original ladder (fuzzy → locality scan → geocode/distance → AI). Parts of this page still describe a short-lived "address-first nearest-three" version and are out of date until the original page is restored. **The accurate description is [GEOSENSE_EXPLAINED.md](GEOSENSE_EXPLAINED.md).**
+
 ## Current v2 address flow
 
 ```text

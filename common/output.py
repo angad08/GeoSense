@@ -17,11 +17,11 @@ from tabulate import tabulate
 # Human-readable confidence labels, shown in the output table and reused by
 # the lookup log so the logged wording always matches what was displayed.
 SURETY_LABELS = {
-    "VERY HIGH": "Strong lead — verify",
-    "HIGH":      "Lead — verify",
-    "MEDIUM":    "Possible — verify",
-    "LOW":       "Uncertain — review",
-    "NONE":      "No suggestion",
+    "VERY HIGH": "Guaranteed",
+    "HIGH":      "Very Likely",
+    "MEDIUM":    "Likely",
+    "LOW":       "Possible",
+    "NONE":      "Unknown",
 }
 
 

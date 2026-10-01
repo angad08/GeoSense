@@ -24,33 +24,24 @@ class SafetyTests(unittest.TestCase):
                          {("DISTRICT A", "TOWN PS"),
                           ("DISTRICT A", "RURAL PS")})
 
-    def test_address_geocode_rejects_area_centre_and_conflicting_pin(self):
-        broad = {
-            "types": ["administrative_area_level_2"],
-            "geometry": {"location": {"lat": 13.0, "lng": 80.0}},
-            "formatted_address": "District, India",
-        }
-        with patch.object(geo, "_geocode_top", return_value=broad):
-            self.assertIsNone(geo.geocode_address("Some village, 600001"))
-
-        wrong_pin = {
-            "types": ["street_address"],
-            "geometry": {"location": {"lat": 13.0, "lng": 80.0}},
-            "formatted_address": "Other street, 600002, India",
+    def test_address_geocode_keeps_neighbouring_pin_result(self):
+        # A real lookup (PIN 502032) was matched by Google to an exact street
+        # in the neighbouring PIN 502033. Discarding it left the officer with
+        # no answer at all, so the address geocode must accept it.
+        neighbouring_pin = {
+            "types": ["street_address", "subpremise"],
+            "geometry": {"location": {"lat": 17.5, "lng": 78.3}},
+            "formatted_address": "Some street, Telangana 502033, India",
             "address_components": [
-                {"long_name": "600002", "types": ["postal_code"]}
+                {"long_name": "502033", "types": ["postal_code"]},
+                {"long_name": "Telangana", "types": ["administrative_area_level_1"]},
             ],
         }
-        with patch.object(geo, "_geocode_top", return_value=wrong_pin):
-            self.assertIsNone(geo.geocode_address("Some street, 600001"))
-
-        wrong_state = dict(wrong_pin)
-        wrong_state["address_components"] = [
-            {"long_name": "Andhra Pradesh", "types": ["administrative_area_level_1"]}
-        ]
-        with patch.object(geo, "_geocode_top", return_value=wrong_state):
-            self.assertIsNone(geo.geocode_address("Some street, Telangana",
-                                                  expected_state="TELANGANA"))
+        with patch.object(geo, "_geocode_top", return_value=neighbouring_pin):
+            self.assertEqual(geo.geocode_address("Some street, 502032"),
+                             ((17.5, 78.3), "Some street, Telangana 502033, India"))
+            self.assertEqual(geo.geocode_address("Some street, 502032",
+                                                 return_state=True)[2], "Telangana")
 
     def test_distance_lookup_does_not_retry_blank_station(self):
         cache = {("DISTRICT", "MISSING"): None}

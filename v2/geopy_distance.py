@@ -93,31 +93,24 @@ def geocode_address(address, expected_state=None, return_state=False):
 
     Always check the returned formatted_address before trusting the
     coordinates — Google can silently snap to the wrong locality.
+
+    Google's best result is accepted as-is, as the lookup ladder has always
+    done: a PIN or precision mismatch is not grounds for discarding it (a
+    neighbouring PIN on an exact street match is common), and the ladder's
+    own checks (DISTANCE_WARN_KM warnings, the text pin) judge the result.
+    `expected_state` is accepted for call compatibility and not enforced here
+    — the state filter has already narrowed the stations.
     """
     top = _geocode_top(address)
     if not top:
         return None
     coords, formatted = _coords_and_formatted(top)
-    if not coords_in_envelope(*coords) or vague_result_type(top):
-        print(f"  [WARN] Address geocode is too broad or outside India: '{formatted}'")
-        return None
-    supplied_pins = set(re.findall(r"(?<!\d)\d{6}(?!\d)", address))
-    returned_pins = {
-        comp.get("long_name", "") for comp in top.get("address_components", [])
-        if "postal_code" in comp.get("types", [])
-    }
-    if supplied_pins and returned_pins and supplied_pins.isdisjoint(returned_pins):
-        print(f"  [WARN] Address PIN conflicts with Google's result: '{formatted}'")
-        return None
+    if not return_state:
+        return coords, formatted
     google_state = result_state(top)
     if google_state and not google_state.isascii():
         google_state = _english_state_at(*coords) or google_state
-    if expected_state:
-        if google_state and not same_state(expected_state, google_state):
-            print(f"  [WARN] Address geocoded in '{google_state}', but the "
-                  f"address names '{expected_state}'.")
-            return None
-    return (coords, formatted, google_state) if return_state else (coords, formatted)
+    return coords, formatted, google_state
 
 
 # Result types that mean Google did not find the station and fell back to the

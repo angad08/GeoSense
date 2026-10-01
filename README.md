@@ -1,5 +1,7 @@
 # GeoSense
 
+> **Note (2026-10-01):** the lookup flow has been restored to the original ladder (fuzzy → locality scan → geocode/distance → AI). Parts of this page still describe a short-lived "address-first nearest-three" version and are out of date until the original page is restored. **The accurate description is [GEOSENSE_EXPLAINED.md](GEOSENSE_EXPLAINED.md).**
+
 GeoSense helps an officer choose a nearby police station for a passport-verification address. It reads real station rows from `data/POLICE_STATION.xlsx`, geocodes the address once, and displays the **three nearest located stations with distances**. An applicant-supplied PS or district may be a guess; when an address is present, neither restricts the search.
 
 The officer selects among the nearby candidates. An exact match to one previously recorded station name is not the success criterion: several stations can be similarly close. GeoSense measures straight-line distance, not legal jurisdiction or travel time.
