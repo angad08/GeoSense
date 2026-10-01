@@ -520,7 +520,16 @@ def geocode_station_place(district, ps, coords):
     names = [c["long_name"] for c in top.get("address_components", [])
              if set(c.get("types", [])) & PLACE_TYPES]
     target = _distinct_name(place)
-    if not any(fuzz.ratio(target, _distinct_name(n)) >= STATION_PLACE_MATCH for n in names):
+
+    def _same_place(found):
+        # Similar spelling AND similar length: "T.V.NALLUR" (Thiruvennainallur)
+        # must not be answered by any village called plain "Nallur".
+        found = _distinct_name(found)
+        short, long_ = sorted((len(target), len(found)))
+        return (fuzz.ratio(target, found) >= STATION_PLACE_MATCH
+                and long_ and short / long_ >= 0.8)
+
+    if not any(_same_place(n) for n in names):
         return None, f"place name does not match ({', '.join(names[:2]) or 'none'})"
     if not coords_in_envelope(lat, lng) or not same_state(state, result_state(top)):
         return None, "outside the row's state"

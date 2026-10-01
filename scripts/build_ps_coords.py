@@ -210,11 +210,18 @@ def main():
     for n, (district, ps) in enumerate(missing, start=1):
         coords = geocode_station(district, ps)   # None → skipped, failed or rejected
         tag    = f"  [{n:>{width}}/{total}]"
+        how    = ""
+        if not coords:
+            # The station search failed; the village / town it is named after,
+            # under the same checks, is the next-best location.
+            coords, detail = geocode_station_place(district, ps, cache)
+            how = f" (its town: {detail.split(',')[0]})" if coords else ""
 
         if coords:
             lat, lng = coords
             updates.append((district, ps, lat, lng))
-            print(f"{tag} OK     {ps} ({district}) -> {lat:.5f}, {lng:.5f}", flush=True)
+            print(f"{tag} OK     {ps} ({district}) -> {lat:.5f}, {lng:.5f}{how}",
+                  flush=True)
         else:
             # Left blank in the sheet, never dropped — retried next run.
             # geocode_station() has already printed the reason above.

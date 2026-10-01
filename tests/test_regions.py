@@ -150,6 +150,12 @@ class RestackTests(unittest.TestCase):
         new, _ = self._run("RAJAHMUNDRY III TOWN", self._top("Rajamahendravaram", 10.0, 78.2))
         self.assertIsNone(new)
 
+    def test_initials_town_not_answered_by_a_shorter_namesake(self):
+        new, _ = self._run("T.V.NALLUR", self._top("Nallur", 10.0, 78.2))
+        self.assertIsNone(new)
+        new, _ = self._run("NADUIVATTEM", self._top("Naduvattam", 10.0, 78.2))
+        self.assertEqual(new, (10.0, 78.2))     # spelling variant still accepted
+
     def test_keeps_point_for_a_shop_or_other_non_place(self):
         new, _ = self._run("MELUR", self._top("Melur", 10.03, 78.34,
                                               types=("clothing_store", "establishment")))
