@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""
+GeoSense — scripts/build_ps_coords.py  (optional bulk warm-up)
+---------------------------------------------------------------
+Fills the LAT / LNG columns of the PoliceStation sheet for every station that
+does not have coordinates yet, and saves them back into the same Excel file.
+There is no separate cache file — the Excel is the single source of truth.
+
+Run this explicitly when station coordinates need enrichment. Ordinary v2
+lookups do not retry failed stations or write new coordinates.
+
+Safe to re-run: stations that already have coordinates are skipped, so a re-run
+after adding rows to the Excel geocodes only the new ones. Nothing is
+overwritten — including coordinates you filled in by hand.
+
+Each query is built from the station's own row:
+    "{PS_NAME} Police Station, {DISTRICT}, {STATE}, India"
+with the name cleaned for search only (station codes like "K-4 ", stray dots and
+"P.S" removed; the sheet is never changed). A station whose STATE is blank is
+skipped, never given a default state. A result Google places in a different
+state than the row's STATE, or only at a district / taluk centre, is rejected
+unwritten.
+
+Stations that fail to geocode or share a point with a differently named station
+are left blank and listed at the end. They are retried only on a later explicit
+run. Keep the source station name intact and investigate aliases or verified
+coordinates outside this script.
+
+Usage (from the project root, with the Excel file CLOSED):
+    export GOOGLE_MAPS_API_KEY=your_key_here
+    python scripts/build_ps_coords.py
+
+    python scripts/build_ps_coords.py --dry-run
+        Prints the query each unresolved station would get, plus a count per
+        state. No API calls, no API key needed, nothing written.
+"""
+
+import argparse
+import sys
+from collections import Counter
+from pathlib import Path
+
+# Make the project root importable no matter how this file is launched.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from common.config import EXCEL_FILE, SHEET_NAME
+from v2.geopy_distance import (
+    _load_coords_cache, _state_cache, _write_coords, _clear_coords,
+    geocode_station, station_geocode_query, audit_station,
+    coordinate_collisions,
+)
+
+NO_STATE = "(STATE blank - would be skipped)"
+
+
+def dry_run(missing):
+    """Print every query that would be sent, and a count per state.
+    No API calls, no writes."""
+    per_state = Counter()
+    for district, ps in missing:
+        state = _state_cache.get((district, ps), "")
+        query = station_geocode_query(ps, district, state)
+        per_state[state or NO_STATE] += 1
+        print(f"  {query}" if query else f"  [SKIP] {ps} ({district}) - STATE is blank")
+
+    print("\nPer state (stations needing coordinates):")
+    for state, n in sorted(per_state.items()):
+        print(f"    {state:34} {n}")
+    print("\nDry run - no API calls made, nothing written.")
+
+
+def audit(cache, fix):
+    """Report sibling outliers and coordinate stacks. Isolated rows may
+    trigger a Geocoding call. --fix clears only sibling outliers; stacks need
+    independent review because some are genuine colocations."""
+    stored = [(k, v) for k, v in cache.items() if v is not None]
+    print(f"Auditing {len(stored)} stored coordinate(s) ...\n", flush=True)
+    stacks = coordinate_collisions(cache)
+    print(f"  REVIEW  {len(stacks)} station coordinate(s) share a point with "
+          "a differently named station; --fix does not clear these.")
+    bad = []
+    for (district, ps), (lat, lng) in stored:
+        reason = audit_station(district, ps, lat, lng)
+        if reason:
+            bad.append((district, ps))
+            print(f"  SUSPECT  {ps} ({district}) [{_state_cache.get((district, ps), '')}]: {reason}", flush=True)
+    print(f"\n{len(bad)} suspect coordinate(s).")
+    if bad and fix:
+        _clear_coords(bad)
+    elif bad:
+        print("Re-run with --audit --fix to clear them.")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fill missing station LAT/LNG in the PoliceStation sheet.")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="geocode only the first N missing stations "
+                             "(a trial run before the full fill)")
+    parser.add_argument("--audit", action="store_true",
+                        help="re-check stored coordinates for same-name places "
+                             "far from their district and report coordinate stacks; "
+                             "isolated rows may require API calls")
+    parser.add_argument("--fix", action="store_true",
+                        help="with --audit: clear the suspect coordinates")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the geocode queries and per-state counts; "
+                             "no API calls, no writes")
+    args = parser.parse_args()
+
+    cache   = _load_coords_cache()
+    missing = [key for key, coords in cache.items() if coords is None]
+
+    print(f"Workbook : {EXCEL_FILE}")
+    print(f"Sheet    : {SHEET_NAME}")
+    print(f"Stations : {len(cache)} total, {len(missing)} without coordinates\n")
+
+    if args.audit:
+        audit(cache, args.fix)
+        return
+
+    if not missing:
+        print("Nothing to do — every station already has coordinates.")
+        return
+
+    if args.limit > 0:
+        missing = missing[:args.limit]
+        print(f"--limit {args.limit}: only the first {len(missing)} are processed.\n")
+
+    if args.dry_run:
+        dry_run(missing)
+        return
+
+    updates, failed = [], []
+    total, width = len(missing), len(str(len(missing)))
+
+    # One line per station, printed as it happens, so a long run never looks
+    # frozen. Nothing is written until the end — the Excel is saved once.
+    print(f"Geocoding {total} station(s) — one line each. The Excel is saved "
+          f"once, at the end.\n", flush=True)
+
+    for n, (district, ps) in enumerate(missing, start=1):
+        coords = geocode_station(district, ps)   # None → skipped, failed or rejected
+        tag    = f"  [{n:>{width}}/{total}]"
+
+        if coords:
+            lat, lng = coords
+            updates.append((district, ps, lat, lng))
+            print(f"{tag} OK     {ps} ({district}) -> {lat:.5f}, {lng:.5f}", flush=True)
+        else:
+            # Left blank in the sheet, never dropped — retried next run.
+            # geocode_station() has already printed the reason above.
+            failed.append(f"{ps} ({district})")
+            print(f"{tag} BLANK  {ps} ({district}) — left blank, see warning above",
+                  flush=True)
+
+    # Sibling re-check with the whole batch in view: during the loop a new
+    # district had too few stored stations to judge, now it has them all.
+    combined = dict(cache)
+    combined.update({(d, p): (la, ln) for d, p, la, ln in updates})
+    kept = []
+    for d, p, la, ln in updates:
+        reason = audit_station(d, p, la, ln, combined)
+        if reason:
+            failed.append(f"{p} ({d})")
+            print(f"  [WARN] Rejected {p} ({d}): {reason} — likely a same-name "
+                  f"place elsewhere, left blank.", flush=True)
+        else:
+            kept.append((d, p, la, ln))
+    # Detect same-point matches against both stored coordinates and the entire
+    # pending batch. This also works when a new state has no stored siblings.
+    proposed = dict(cache)
+    proposed.update({(d, p): (la, ln) for d, p, la, ln in kept})
+    colliding = coordinate_collisions(proposed)
+    updates = []
+    for d, p, la, ln in kept:
+        if (d, p) in colliding:
+            failed.append(f"{p} ({d})")
+            print(f"  [WARN] Review {p} ({d}): coordinate is shared with a "
+                  "differently named station — left blank.", flush=True)
+        else:
+            updates.append((d, p, la, ln))
+
+    if updates:
+        print(f"\nSaving {len(updates)} coordinate(s) to {EXCEL_FILE.name} ...", flush=True)
+        _write_coords(updates)
+
+    print(f"\nGeocoded : {len(updates)}")
+    print(f"Not filled (skipped / failed / rejected) : {len(failed)}")
+    for name in failed:
+        print(f"    - {name}")
+
+    if failed:
+        print("\nThese are still blank. Review their search aliases, STATE and "
+              "verified locations before another explicit build run.")
+
+
+if __name__ == "__main__":
+    main()

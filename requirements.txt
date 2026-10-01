@@ -1,0 +1,15 @@
+# ── Core (needed by both versions + the test harness) ─────────────────────────
+pandas          # Excel load (common/loader.py)
+openpyxl        # xlsx engine for pandas.read_excel + lookup_log writes
+rapidfuzz       # fuzzy text matching (common/matcher.py)
+tabulate        # result table (common/output.py)
+python-dotenv   # optional: auto-loads a .env file at startup (common/api_keys.py)
+
+# ── V2 only ───────────────────────────────────────────────────────────────────
+geopy           # geodesic distance (v2/geopy_distance.py)
+googlemaps      # geocoding (v2/geopy_distance.py)
+
+# ── AI providers (install only the one AI_PROVIDER is set to) ─────────────────
+anthropic       # default: AI_PROVIDER = "anthropic"
+# openai                 # if AI_PROVIDER = "openai"
+# google-generativeai    # if AI_PROVIDER = "gemini"

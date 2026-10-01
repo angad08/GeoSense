@@ -1,0 +1,146 @@
+"""
+GeoSense — common/config.py  (shared base)
+-------------------------------------------
+Settings shared IDENTICALLY by v1 and v2. Version-specific values live in the
+per-version config (see v2/config.py, which imports this base and adds its own
+DISTANCE_WARN_KM). v1 needs no extra values, so it imports this module directly.
+
+Excel file is resolved from the PROJECT ROOT (the parent of common/), so both
+versions and the test harness find data/ from any working directory:
+
+    GeoSense/                 <- project root
+    ├── common/config.py      <- this file  (root = parent.parent)
+    └── data/POLICE_STATION.xlsx
+"""
+
+from pathlib import Path
+
+# ── Excel Source (resolved from project root) ──────────────────────────────────
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# Use new naming convention; fall back to old if needed for compatibility
+_preferred = PROJECT_ROOT / "data" / "sample_police_stations.xlsx"
+_fallback = PROJECT_ROOT / "data" / "POLICE_STATION.xlsx"
+EXCEL_FILE = _preferred if _preferred.exists() else _fallback
+SHEET_NAME = "PoliceStation"
+COL_DISTRICT = "DISTRICT"
+COL_PS       = "POLICE STATION"
+COL_STATE    = "STATE"
+
+# ── Geocoding (v2) ─────────────────────────────────────────────────────────────
+# Every station geocode query is built from that station's OWN row:
+#     "{PS_NAME} Police Station, {DISTRICT}, {STATE}, India"
+#
+# There is deliberately no default state. District names repeat across Indian
+# states, so a query with the wrong state does not fail — the geocoder returns a
+# confident wrong location. A row whose STATE is blank is skipped (left blank,
+# named in a warning) and retried next run once the STATE cell is filled.
+#
+# Station coordinates live in the PoliceStation sheet itself, in the COL_LAT /
+# COL_LNG columns, alongside the district and station name. There is no separate
+# cache file: the Excel is the single source of truth.
+#
+# A blank LAT/LNG means coordinate maintenance is needed. A normal lookup
+# geocodes only the user's input address and never retries blank station rows.
+# scripts/build_ps_coords.py fills new rows during an explicit maintenance run.
+# Every geocode (stations AND the user's address) is locked to this country via
+# the API's component filter. Query text is only a hint: "P.R.PETA ..., India"
+# was answered with Puerto Rico ("P.R.") until results were hard-restricted.
+GEOCODE_COUNTRY = "IN"           # ISO 3166-1 alpha-2
+COL_LAT        = "LAT"
+COL_LNG        = "LNG"
+
+# ── Coordinate Sanity Check ────────────────────────────────────────────────────
+# A geocoded station is written only if Google places it in the SAME state as
+# the row's own STATE cell (checked in v2/geopy_distance.py against the result's
+# administrative_area_level_1). That adapts to any state added to the master
+# list — there is no per-state box to maintain.
+#
+# The box below is a coarse outer guard only: India's full extent, fixed by
+# geography, never edited when states are added. A rejected station is left
+# blank and retried next run; a wrong coordinate, once written, is permanent.
+COORD_LAT_MIN = 6.0
+COORD_LAT_MAX = 37.6
+COORD_LNG_MIN = 68.0
+COORD_LNG_MAX = 97.5
+
+# A geocoded station farther than SIBLING_MAX_KM from EVERY other station of
+# its own district (as the sheet groups them) is a same-name village elsewhere
+# and is rejected. Measured on ~3,000 stations: 99% sit within ~21 km of a
+# sibling; wrong results were 41–251 km out. Only judged once the district has
+# SIBLING_MIN_COUNT stored stations.
+SIBLING_MAX_KM    = 35
+SIBLING_MIN_COUNT = 3
+
+# ── State Detection ────────────────────────────────────────────────────────────
+# common/state_filter.py narrows the search to the state an address names. The
+# state list comes from the STATE column; this cutoff (0–100) only decides how
+# close a spelling must be ("TELENGANA" -> TELANGANA scores 88.9).
+STATE_MATCH_CUTOFF = 85
+
+# ── Matching Thresholds ────────────────────────────────────────────────────────
+FUZZY_CUTOFF    = 80    # 0–100: scores below this are rejected
+LOCALITY_CUTOFF = 86    # stricter cutoff for address-locality → PS/District scans
+TOP_N           = 3     # number of results to return
+
+# ── Locality-Scan Safety Knobs ─────────────────────────────────────────────────
+# These two constants make the "junk token wins by sheet order" failure shape
+# structurally impossible in the address-locality scan (matcher.py, rungs 3a/3b).
+#
+# MIN_LOCALITY_LEN — minimum number of significant characters a candidate
+#   locality must have before it is allowed to be fuzzy-matched at all. A door
+#   number fragment like "H" (1 char) carries no geographic signal and must
+#   never become a candidate. Applied uniformly to every candidate, whether a
+#   lone word or a joined multi-word segment.
+#
+# MAX_TIE_WIDTH — if more than this many police stations (or districts) tie at
+#   the top score, the whole locality scan is treated as a null result and the
+#   query falls through to the next rung. A tie that wide is not a ranking; it
+#   is the signature of a token that matches everything (i.e. matches nothing),
+#   so picking any of them — by sheet order or otherwise — would be noise.
+MIN_LOCALITY_LEN = 4    # candidates shorter than this are never considered
+MAX_TIE_WIDTH    = 5    # a top-score tie wider than this → null result
+
+# ── Lookup Log ─────────────────────────────────────────────────────────────────
+# Completed lookups are appended to this sheet inside the same workbook.
+#
+# THE SHEET IS SHARED. Some columns are written by this script; the rest are
+# filled in by hand and sit interleaved between them. Writes are therefore
+# located BY HEADER TEXT, never by position — appending positionally would
+# overwrite the manual columns. A missing expected header is a hard error, not
+# something to work around by writing somewhere else.
+LOG_SHEET_NAME = "LookupLogs"
+
+# Written by the script, matched on header text.
+LOG_COL_ADDRESS    = "ADDRESS"
+LOG_COL_PRED_PS    = "PREDICTED PS"
+LOG_COL_PRED_DIST  = "PREDICTED DISTRICT"
+LOG_COL_LOOKUP     = "RESULT LOOKUP"
+LOG_COL_MATCH      = "RESULT MATCH"
+
+LOG_WRITE_COLS = [
+    LOG_COL_ADDRESS,
+    LOG_COL_PRED_PS,
+    LOG_COL_PRED_DIST,
+    LOG_COL_LOOKUP,
+    LOG_COL_MATCH,
+]
+
+# Maintained by hand — never written, never cleared. Listed so the intent is
+# explicit and a future change cannot quietly start writing one of them.
+LOG_MANUAL_COLS = ["FILE NO", "ACTUAL PS KNOWN", "STATUS", "MATCH"]
+
+# ── AI Provider ───────────────────────────────────────────────────────────────
+# Set AI_PROVIDER to switch between providers.
+# Matching API key must be set as an environment variable.
+#
+#   Anthropic : export ANTHROPIC_API_KEY=sk-ant-...
+#   OpenAI    : export OPENAI_API_KEY=sk-...
+#   Gemini    : export GOOGLE_API_KEY=AI...
+
+AI_PROVIDER = "anthropic"          # "anthropic"  |  "openai"  |  "gemini"
+
+AI_MODEL = {
+    "anthropic" : "claude-sonnet-4-6",
+    "openai"    : "gpt-4o",
+    "gemini"    : "gemini-1.5-pro",
+}[AI_PROVIDER]
