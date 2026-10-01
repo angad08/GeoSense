@@ -86,6 +86,57 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(values["RESULT LOOKUP"], "NO RESULT")
         self.assertEqual(values["RESULT MATCH"], "No suggestion")
         self.assertEqual(values["PREDICTED PS"], "")
+        self.assertEqual(values["SHOWN STATIONS"], "")
+
+    def test_log_records_every_shown_station(self):
+        results = [
+            {"rank": 1, "police_station": "BORABANDA", "district": "HYDERABAD",
+             "distance": "~1.2 km", "confidence": "HIGH"},
+            {"rank": 2, "police_station": "SR NAGAR", "district": "HYDERABAD",
+             "distance": "~2.9 km", "confidence": "LOW",
+             "coordinate_unverified": True},
+            {"rank": 3, "police_station": "KUKATPALLY", "district": "CYBERABAD",
+             "distance": "N/A", "confidence": "LOW"},
+        ]
+        self.assertEqual(
+            lookup_log.shown_summary(results),
+            "1. BORABANDA (HYDERABAD) ~1.2 km | "
+            "2. SR NAGAR (HYDERABAD) ~2.9 km [shared point] | "
+            "3. KUKATPALLY (CYBERABAD)")
+
+    def test_shown_column_added_without_moving_existing_data(self):
+        import os
+        import tempfile
+        import openpyxl
+        from openpyxl.worksheet.table import Table
+
+        headers = ["FILE NO", "ADDRESS", "ACTUAL PS KNOWN", "PREDICTED PS",
+                   "PV STATUS", "MATCH", "RESULT LOOKUP", "RESULT MATCH",
+                   "PREDICTED DISTRICT"]
+        old_row = ["F1", "old address", "TOWN", "TOWN", "DONE", "YES",
+                   "DISTRICT", "Very Likely", "DIST"]
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "LookupLogs"
+        ws.append(headers)
+        ws.append(old_row)
+        ws.add_table(Table(displayName="Table2", ref="A1:I2"))
+        path = os.path.join(tempfile.mkdtemp(), "log.xlsx")
+        wb.save(path)
+
+        values = {"ADDRESS": "new address", "PREDICTED PS": "A",
+                  "PREDICTED DISTRICT": "D", "RESULT LOOKUP": "DISTRICT",
+                  "RESULT MATCH": "Likely", "SHOWN STATIONS": "1. A (D) ~1 km"}
+        lookup_log._append_row(path, values)
+        lookup_log._append_row(path, values)   # header must not be added twice
+
+        ws = openpyxl.load_workbook(path)["LookupLogs"]
+        self.assertEqual([c.value for c in ws[1]], headers + ["SHOWN STATIONS"])
+        self.assertEqual([c.value for c in ws[2]][:9], old_row)
+        self.assertIsNone(ws.cell(row=2, column=10).value)
+        self.assertEqual(ws.cell(row=3, column=10).value, "1. A (D) ~1 km")
+        self.assertEqual(ws.cell(row=4, column=2).value, "new address")
+        self.assertIsNone(ws.cell(row=3, column=1).value)   # FILE NO stays manual
 
 
 if __name__ == "__main__":

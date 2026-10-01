@@ -125,6 +125,12 @@ LOG_WRITE_COLS = [
     LOG_COL_MATCH,
 ]
 
+# Every station the lookup showed, in order, with district and distance — so a
+# later check can ask "was the officer's station offered at all?", not only
+# "was it the one picked". Added after the last header on first use; never
+# required, so an older sheet without it still logs normally.
+LOG_COL_SHOWN = "SHOWN STATIONS"
+
 # Maintained by hand — never written, never cleared. Listed so the intent is
 # explicit and a future change cannot quietly start writing one of them.
 LOG_MANUAL_COLS = ["FILE NO", "ACTUAL PS KNOWN", "STATUS", "MATCH"]
