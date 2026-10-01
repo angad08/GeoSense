@@ -1,31 +1,86 @@
-# Quick start
+# Quick Start (2 minutes)
 
-> **Note (2026-10-01):** the lookup flow has been restored to the original ladder (fuzzy → locality scan → geocode/distance → AI). Parts of this page still describe a short-lived "address-first nearest-three" version and are out of date until the original page is restored. **The accurate description is [GEOSENSE_EXPLAINED.md](GEOSENSE_EXPLAINED.md).**
+**Just want to run it?** Start here.
 
-GeoSense v2 displays the three nearest located police-station rows for an address. A guessed station or district supplied with the address does not restrict the search.
-
-1. Close `data/POLICE_STATION.xlsx` in Excel.
-2. Install `requirements.txt` in a Python environment.
-3. Set `GOOGLE_MAPS_API_KEY` and enable the Google Geocoding API for that key.
-4. Run:
+## Install
 
 ```bash
-python main.py --address "7-8-237 Goutham Nagar, Ferozguda, Balanagar, Telangana 500011"
+pip install -r requirements.txt
 ```
 
-The table shows up to three real station rows and their geodesic distances. A normal address lookup makes one Geocoding API call; if Google returns an ambiguous address result, GeoSense shows no distance ranking. The selected result or no-result event is appended to `LookupLogs`.
+## Add your Excel file
 
-To test without API calls:
+The station data is not included in this repo. Place your workbook at:
+
+```
+data/sample_police_stations.xlsx
+```
+
+It needs a `PoliceStation` sheet with `DISTRICT` and `POLICE STATION` columns.
+
+## Try it — no API keys needed
+
+Station and locality lookups resolve entirely from the Excel:
 
 ```bash
-python tests/validate_test_cases.py
-python -m unittest tests.test_safety
+python main.py --ps "Gachibowli"
 ```
 
-To inspect station coordinate work before spending on Google calls:
+```text
+--------------------------------------------------
+  #  Police Station    District              Surety      Distance
+---  ----------------  --------------------  ----------  ----------
+  1  GACHIBOWLI        CYBERABAD-RANGAREDDY  Guaranteed  N/A
+--------------------------------------------------
+```
+
+The regression tests also need no keys:
 
 ```bash
-python scripts/build_ps_coords.py --dry-run
+python -m tests.validate_test_cases
 ```
 
-See [README.md](README.md) for the workbook contract and [CODEX_REVIEW.md](CODEX_REVIEW.md) for the data-quality review.
+## Set API keys (for the paid rungs)
+
+Only needed when a lookup actually reaches geocoding or AI — messy addresses
+that the text scan can't resolve:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."          # AI district inference
+export GOOGLE_MAPS_API_KEY="AIza..."           # v2 distance ranking
+```
+
+Or put the same lines in a `.env` file at the project root — it's loaded
+automatically.
+
+> Don't have keys? Get them:
+> - Anthropic: https://console.anthropic.com/
+> - Google Maps: https://console.cloud.google.com/ → enable **Geocoding API**
+
+## Run
+
+```bash
+python main.py                                  # v2 (default), interactive
+python main.py --address "Madhapur Hyderabad"   # address → district + station
+python main.py v1                               # v1 (AI-estimated ranking)
+```
+
+## v1 vs v2
+
+Both share the same matching and routing — they differ only in how stations
+are ranked geographically:
+
+| | v1 | v2 (default) |
+|---------|---------|---------------|
+| **Ranking** | AI estimates distances | Real geodesic distance (WGS-84) |
+| **Distance shown** | An AI guess | A measured number in km |
+| **Needs** | AI provider key | AI provider key + Google Maps key |
+
+v2 is the default because a measured distance is auditable and an estimate
+isn't.
+
+## Need Help?
+
+- Setup issues? → [SETUP.md](SETUP.md)
+- How it works? → [ARCHITECTURE.md](ARCHITECTURE.md)
+- Full docs? → [README.md](README.md)
