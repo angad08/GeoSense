@@ -120,6 +120,10 @@ Geocode once and return the nearest stations **across all states**.
 **3c. Last resort: AI** — `v2/ai_engine.py`
 The AI is given the address and the district list for the states being searched (grouped by state, region named from the data). It returns up to 2 districts, each re-validated against the sheet. Then rank by real distance. **This is the only place AI is used in v2, and it only picks a district, never a station.**
 
+This rung narrows hardest of all, and on the weakest evidence — nothing in the sheet matched the address, so the districts are a model's guess. If that guess is wrong, the true station sits in a district that was never searched and cannot appear at all. So the **same cross-district neighbour check** runs here too, against the best of what the AI chose, with both inferred districts counted as already-searched. The warning says the district was *inferred by the AI*.
+
+It also costs less than it used to: `rank_ps_by_distance` geocodes the address once per inferred district, so two districts meant two paid calls. The geocode is now memoised per address, so the two district passes and the cross-district pass share a single call.
+
 ### Case 0 — Nothing worked
 Return an empty result, honestly.
 
@@ -200,6 +204,8 @@ Keys are read from the environment or `.env`: `GOOGLE_MAPS_API_KEY`, plus one AI
 | District or address with a station/district named (2, 3a, 3b) | 1 Geocoding call (about US$0.005 list price, after the free tier) |
 | No state named (3n) | 1 call |
 | AI fallback (3c) | 1 AI call + 1 Geocoding call |
+
+One geocoding call per lookup is now literally true. It was not before: every rung that ranked more than one district geocoded the address again for each, so 3c with two inferred districts paid twice. `_geocode_top` is memoised per address, so every pass within a lookup — including the cross-district scan — shares one call.
 
 Station geocoding is a one-time bulk cost (about 3,000 calls so far). Blank stations are retried, so CODEX_REVIEW suggests a cooldown ledger.
 

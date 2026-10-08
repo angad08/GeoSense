@@ -213,6 +213,11 @@ every district in scope. A station outside the stated district that is at
 least CROSS_DISTRICT_MARGIN_KM (1 km) nearer than the district's own best
 is listed first, marked `*`, up to CROSS_DISTRICT_MAX (2). Costs no extra
 API call — the address geocode is memoised.
+
+The same check runs on every rung that narrows to a district before
+measuring distance: Case 2 (district typed), 3b (district named in the
+address) and 3c (district inferred by the AI). Shared helpers, so the
+three cannot drift; the warning names which of the three it was.
     ↓
 Output: top 3 with measured distances, plus any nearer neighbours above
         them; advisory warning if the nearest station is >
