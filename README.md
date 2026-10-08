@@ -88,6 +88,7 @@ The ranking stage was built twice, deliberately. Standardisation, matching, stat
 
 - checks address text matches by distance (Case 3a), ordering them nearest-first and downgrading one that is far away;
 - pins a station named in the address at rank 1 when a district is given (Case 2);
+- surfaces a station that is **nearer but in another district**, on every rung that narrows to one (Case 2, 3b, 3c);
 - ranks the nearest stations across all states when the address names no state and the text matches nothing (Case 3n).
 
 v1 does none of these.
@@ -136,6 +137,31 @@ $ python main.py --address "6-31-1, Flat 101, Akhila Enclave, Old Bowenpally, Se
 ```
 
 When the address *doesn't* name a station area, the ladder continues: the district is matched or AI-inferred, and stations are ranked by **measured geodesic distance** (`~4.2 km`-style figures in the Distance column, one Geocoding API call).
+
+**A nearer station in the next district** → naming a district narrows the search to it, which is usually what you want and occasionally hides the answer. District lines do not follow distance, and an applicant writing "Hyderabad" may mean the city rather than the district. So after ranking the district, every station in scope is measured too, and a clearly nearer one is shown above the rest, marked `*`:
+
+```text
+$ python main.py --district "Hyderabad" --address "H NO 2-3-744/1, Ganesh Nagar, Nagole, Hyderabad 500068"
+
+--------------------------------------------------
+  #  Police Station      District                 Confidence   Distance
+---  ------------------  -----------------------  -----------  ----------
+  1  NAGOLE              MALKAJGIRI-RANGAREDDY *  Likely       ~0.7 km
+  2  UPPAL               MALKAJGIRI-MEDCHAL    *  Likely       ~2.0 km
+  3  AMBERPET            HYDERABAD                Very Likely  ~4.7 km
+  4  MALAKPET            HYDERABAD                Likely       ~5.3 km
+  5  OSMANIA UNIVERSITY  HYDERABAD                Likely       ~5.5 km
+--------------------------------------------------
+  * Outside the matched district — shown because it is nearer.
+
+  [!] NAGOLE (MALKAJGIRI-RANGAREDDY) is ~0.7 km away — nearer than anything
+      in HYDERABAD, whose closest is ~4.7 km. It sits outside the district
+      you entered, so it is shown for comparison, not as a correction.
+      District boundaries do not follow distance — confirm jurisdiction
+      before using it.
+```
+
+It is **surfaced, never substituted** — the district you asked for keeps its own ranking underneath, because nearest in a straight line is not the same as correct jurisdiction. The check runs on every rung that narrows to a single district: one you type (Case 2), one read out of the address (3b), and one the AI infers (3c) — where it matters most, since a wrong guess otherwise puts the true station in a district that is never searched. It costs no extra API call: station coordinates are cached and the address geocode is reused.
 
 Same tool, opposite directions — and every station printed is a real row from your Excel, never invented. (Outputs above are actual runs against the Telangana dataset.)
 
