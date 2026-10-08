@@ -112,6 +112,8 @@ If stations are named, geocode the address once to verify by distance. Same-name
 **3b. Does the address name a district or zone?** (e.g. `SECUNDERABAD`) — `find_district_by_localities`
 If so, geocode and rank that district's stations by distance.
 
+This narrows before measuring, exactly as Case 2 does, so it runs the **same cross-district neighbour check**: any station at least `CROSS_DISTRICT_MARGIN_KM` nearer than the district's own best is listed first and marked `*`. The warning says the district was *named in the address*, rather than entered by the officer — so you know which to question.
+
 **3n. No single state named, and 3a/3b found nothing**
 Geocode once and return the nearest stations **across all states**.
 

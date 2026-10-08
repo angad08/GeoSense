@@ -64,7 +64,10 @@ def print_output(result):
     print(sep)
     print("  Compare the nearby candidates and their distances before selecting.")
     if outside:
-        print("  * Outside the district you entered — shown because it is nearer.")
+        # Neutral wording: the district may have been typed by the officer
+        # (Case 2) or read out of the address (Case 3b). The warning under the
+        # table names which one it was.
+        print("  * Outside the matched district — shown because it is nearer.")
     if result.get("method"):
         print(f"  Method: {result['method']}")
 

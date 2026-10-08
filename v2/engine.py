@@ -121,6 +121,80 @@ def _km_label(km):
     return f"~{round(km, 1)} km" if km is not None else "N/A"
 
 
+# ── Cross-district neighbours ─────────────────────────────────────────────────
+# Any rung that narrows to a single district filters *before* distance is ever
+# measured, so a station on the far side of a district line is dropped however
+# near it is. That bites whenever the district is loose (a city name spanning
+# several districts) or simply wrong: the honest answer can be metres away and
+# never gets ranked.
+#
+# These three helpers are shared by the rungs that narrow this way — Case 2
+# (district typed by the user) and Case 3b (district named in the address) — so
+# the two cannot drift apart.
+#
+# Surfaced, never substituted: the matched district's own ranking always stays
+# in the list. Nearest in a straight line is not the same as correct
+# jurisdiction, so this adds evidence for the officer rather than overriding them.
+
+def _nearer_in_other_districts(address, df, matched_dist, ranked):
+    """
+    Stations outside `matched_dist` that are clearly nearer than its own best.
+
+    Costs no extra API call: station coordinates come from the prebuilt cache
+    and the address geocode is memoised, so the second pass reuses the first.
+
+    Returns [] when there is no address, nothing ranked, no distance to compare
+    against, or no neighbour beats the margin.
+    """
+    if not (address.strip() and ranked):
+        return []
+    best_in_district = ranked[0].get("distance_km")
+    if best_in_district is None:
+        return []
+
+    nearby = rank_ps_nearby_any_district(address, df,
+                                         top_n=TOP_N + CROSS_DISTRICT_MAX)
+    target = str(matched_dist).strip().upper()
+    return [
+        n for n in nearby
+        if str(n["district"]).strip().upper() != target
+        and n.get("distance_km") is not None
+        and best_in_district - n["distance_km"] >= CROSS_DISTRICT_MARGIN_KM
+    ][:CROSS_DISTRICT_MAX]
+
+
+def _neighbour_rows(neighbours):
+    """Result rows for the neighbours, ranked from 1 — they lead the table."""
+    return [{
+        "rank":             i + 1,
+        "police_station":   n["police_station"],
+        "district":         n["district"],
+        "confidence":       "MEDIUM",
+        "distance":         n.get("distance", "N/A"),
+        "resolved_address": n.get("resolved_address", ""),
+        "coordinate_unverified": n.get("coordinate_unverified", False),
+        "outside_stated_district": True,
+    } for i, n in enumerate(neighbours)]
+
+
+def _neighbour_warning(neighbours, matched_dist, ranked, source):
+    """
+    Say plainly that the lead row is outside the district that was matched, and
+    why it is there anyway. Without this the table reads as a filter failure.
+
+    `source` names where the district came from, so the officer knows whether to
+    question their own input or the address text.
+    """
+    near = neighbours[0]
+    return (
+        f"{near['police_station']} ({near['district']}) is {near['distance']} away "
+        f"— nearer than anything in {matched_dist}, whose closest is "
+        f"{ranked[0]['distance']}. It sits outside the district {source}, so it is "
+        f"shown for comparison, not as a correction. District boundaries do not "
+        f"follow distance — confirm jurisdiction before using it."
+    )
+
+
 def _find_best_match(address, known_ps, known_district, df, ai_client, state_named=False):
     """
     Route to the correct case based on what the user has provided.
@@ -304,45 +378,10 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
             else:
                 ordered = ranked
 
-            # ── Cross-district neighbours ─────────────────────────────────────
-            # The district filter runs before any distance is computed, so a
-            # station just over the boundary is dropped however near it is. That
-            # is wrong whenever the applicant's stated district is loose (a city
-            # name covering several districts) or simply mistaken: the honest
-            # answer is metres away in the next district and never gets ranked.
-            #
-            # So after ranking the district, rank the whole scope and keep any
-            # neighbour clearly nearer than the district's own best. Free: the
-            # coordinates are cached and the address geocode is memoised.
-            # Surfaced, never substituted — nearest is not jurisdiction, so the
-            # district's own candidates always remain in the list.
-            neighbours = []
-            if address.strip() and ranked:
-                best_in_district = ranked[0].get("distance_km")
-                if best_in_district is not None:
-                    nearby = rank_ps_nearby_any_district(
-                        address, df, top_n=TOP_N + CROSS_DISTRICT_MAX)
-                    neighbours = [
-                        n for n in nearby
-                        if str(n["district"]).strip().upper() != str(matched_dist).strip().upper()
-                        and n.get("distance_km") is not None
-                        and best_in_district - n["distance_km"] >= CROSS_DISTRICT_MARGIN_KM
-                    ][:CROSS_DISTRICT_MAX]
-
-            results = []
             # Nearer neighbours lead, so the closest station is visible first;
             # the stated district's own ranking follows intact below.
-            for item in neighbours:
-                results.append({
-                    "rank":             len(results) + 1,
-                    "police_station":   item["police_station"],
-                    "district":         item["district"],
-                    "confidence":       "MEDIUM",
-                    "distance":         item.get("distance", "N/A"),
-                    "resolved_address": item.get("resolved_address", ""),
-                    "coordinate_unverified": item.get("coordinate_unverified", False),
-                    "outside_stated_district": True,
-                })
+            neighbours = _nearer_in_other_districts(address, df, matched_dist, ranked)
+            results    = _neighbour_rows(neighbours)
 
             for i, item in enumerate(ordered[:TOP_N]):
                 if not address.strip():
@@ -391,19 +430,9 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
                 "results":    results,
             }
 
-            # Say plainly that the lead row is not in the district the user
-            # asserted, and why it is there anyway. Without this the table looks
-            # like the district filter simply failed.
             if neighbours:
-                near = neighbours[0]
-                out["warning"] = (
-                    f"{near['police_station']} ({near['district']}) is "
-                    f"{near['distance']} away — nearer than anything in "
-                    f"{matched_dist}, whose closest is {ranked[0]['distance']}. "
-                    f"It sits outside the district you entered, so it is shown "
-                    f"for comparison, not as a correction. District boundaries "
-                    f"do not follow distance — confirm jurisdiction before using it."
-                )
+                out["warning"] = _neighbour_warning(
+                    neighbours, matched_dist, ranked, "you entered")
 
             if excluded:
                 out["note"] = (
@@ -514,8 +543,16 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
             ranked       = rank_ps_by_distance(address, ps_list, matched_dist)
 
             if ranked:
-                results = [{
-                    "rank":             i + 1,
+                # Same blind spot as Case 2: narrowing to the district named in
+                # the address drops a nearer station just over its boundary
+                # before distance is measured. The district came from the text
+                # rather than the officer, but it is no less able to be loose —
+                # a zone name can read as one district and sit beside another.
+                neighbours = _nearer_in_other_districts(address, df, matched_dist, ranked)
+                results    = _neighbour_rows(neighbours)
+
+                results += [{
+                    "rank":             len(results) + i + 1,
                     "police_station":   r["police_station"],
                     "district":         r["district"],
                     "confidence":       "HIGH" if i == 0 else "MEDIUM",
@@ -524,14 +561,22 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
                     "coordinate_unverified": r.get("coordinate_unverified", False),
                 } for i, r in enumerate(ranked)]
 
+                method = (f"Locality '{dist_hits[0]['locality']}' from address matched "
+                          f"District: {matched_dist} ({dist_hits[0]['score']}%) | "
+                          f"Ranked by geodesic distance")
+                if neighbours:
+                    method += (f" | {len(neighbours)} nearer station(s) found outside "
+                               f"{matched_dist} — listed first")
+
                 out = {
                     "case":       3,
                     "confidence": "MEDIUM",
-                    "method":     f"Locality '{dist_hits[0]['locality']}' from address matched "
-                                  f"District: {matched_dist} ({dist_hits[0]['score']}%) | "
-                                  f"Ranked by geodesic distance",
+                    "method":     method,
                     "results":    results,
                 }
+                if neighbours:
+                    out["warning"] = _neighbour_warning(
+                        neighbours, matched_dist, ranked, "named in the address")
                 excluded = getattr(ranked, "excluded", [])
                 if excluded:
                     out["note"] = (
