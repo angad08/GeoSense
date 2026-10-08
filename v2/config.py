@@ -23,3 +23,14 @@ from common.config import (
 # ── Distance Sanity Check (v2 only) ────────────────────────────────────────────
 DISTANCE_WARN_KM = 30   # Case 2: if nearest PS in the stated district is farther
                         # than this, flag that the stated district may be wrong
+
+# ── Cross-district neighbour check (v2 only) ──────────────────────────────────
+# Case 2 filters to the stated district, so a station just over the boundary is
+# dropped before distance is ever computed — even when it is far nearer. After
+# ranking the district, the scope is scanned again across all districts and any
+# clearly nearer neighbour is surfaced alongside, for the human to judge.
+#
+# The margin keeps it signal, not noise: a neighbour 0.1 km nearer changes
+# nothing, so only one nearer by this much is worth showing.
+CROSS_DISTRICT_MARGIN_KM = 1.0
+CROSS_DISTRICT_MAX       = 2    # at most this many neighbours, nearest first

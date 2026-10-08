@@ -47,10 +47,15 @@ def print_output(result):
     show_state = any(r.get("state") for r in result["results"])
     headers = ["#", "Police Station", "District"] + (["State"] if show_state else []) \
               + ["Confidence", "Distance"]
+    # A row can be nearer than anything in the district the user entered while
+    # sitting outside it. Mark the district cell so the table does not read as
+    # the district filter having failed; the legend below explains the mark.
+    outside = any(r.get("outside_stated_district") for r in result["results"])
     rows = []
     for r in result["results"]:
-        surety = SURETY_LABELS.get(r["confidence"], r["confidence"])
-        rows.append([r["rank"], r["police_station"], r["district"]]
+        surety   = SURETY_LABELS.get(r["confidence"], r["confidence"])
+        district = r["district"] + (" *" if r.get("outside_stated_district") else "")
+        rows.append([r["rank"], r["police_station"], district]
                     + ([r.get("state", "")] if show_state else [])
                     + [surety, r.get("distance", "N/A")])
 
@@ -58,6 +63,8 @@ def print_output(result):
     print(tabulate(rows, headers=headers, tablefmt="simple"))
     print(sep)
     print("  Compare the nearby candidates and their distances before selecting.")
+    if outside:
+        print("  * Outside the district you entered — shown because it is nearer.")
     if result.get("method"):
         print(f"  Method: {result['method']}")
 

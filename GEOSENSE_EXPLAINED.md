@@ -92,8 +92,11 @@ The typed name is fuzzy-matched against station names (`common/matcher.py::resol
 1. Fuzzy-match the district.
 2. **Text-first pin:** if the address text itself names a station *inside that district* (strict locality scan, below), that station is pinned at rank 1.
 3. Geocode the address once, measure the real (geodesic) distance to every station in the district, and fill the remaining slots with the nearest.
-4. **Sanity warning:** if even the nearest station in the stated district is more than `DISTANCE_WARN_KM = 30` km away, warn that the stated district is probably wrong. Results are unchanged; the officer decides.
-5. **If the address can't be geocoded:** list the district's stations unranked as LOW and say why. It never pretends to rank.
+4. **Nearer neighbour in another district:** the district filter runs *before* any distance is measured, so a station just over the boundary is dropped however close it is. After ranking the district, the same cached coordinates are scanned across every district in scope, and any station at least `CROSS_DISTRICT_MARGIN_KM = 1` km nearer than the district's own best is listed first and marked `*` (at most `CROSS_DISTRICT_MAX = 2`). This costs no extra API call — the address geocode is memoised, and station coordinates were already cached.
+
+   It is **surfaced, never substituted**: the stated district's own ranking stays in the list underneath, because nearest by straight line is not the same as correct jurisdiction. Real example — an address in Ganesh Nagar, Nagole with the district typed as `HYDERABAD` returned stations 4.7–5.5 km away, while NAGOLE PS sat 0.7 km away in MALKAJGIRI-RANGAREDDY.
+5. **Sanity warning:** if even the nearest station in the stated district is more than `DISTANCE_WARN_KM = 30` km away, warn that the stated district is probably wrong. Results are unchanged; the officer decides. (Suppressed when a nearer neighbour was already named, which is the more specific finding.)
+6. **If the address can't be geocoded:** list the district's stations unranked as LOW and say why. It never pretends to rank.
 
 ### Case 3 — Address only (or typed PS/district failed)
 

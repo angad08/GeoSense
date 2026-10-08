@@ -208,8 +208,15 @@ Text-first pin: if the address itself names a station in that district,
 Geocode input address (1 API call) → geodesic distance to each station's
 cached coordinates → rank ascending
     ↓
-Output: top 3 with measured distances; advisory warning if the nearest
-        station is > DISTANCE_WARN_KM (30 km) away
+Cross-district neighbours: the same cached coordinates are scanned across
+every district in scope. A station outside the stated district that is at
+least CROSS_DISTRICT_MARGIN_KM (1 km) nearer than the district's own best
+is listed first, marked `*`, up to CROSS_DISTRICT_MAX (2). Costs no extra
+API call — the address geocode is memoised.
+    ↓
+Output: top 3 with measured distances, plus any nearer neighbours above
+        them; advisory warning if the nearest station is >
+        DISTANCE_WARN_KM (30 km) away, or naming the nearer neighbour
     ↓
 Log: appended to LookupLogs
 ```

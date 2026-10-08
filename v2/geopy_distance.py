@@ -16,6 +16,7 @@ Install dependencies:
 """
 
 import re
+from functools import lru_cache
 from pathlib import Path
 
 import openpyxl
@@ -60,6 +61,7 @@ def _client():
 # GEOCODING
 # ─────────────────────────────────────────────────────────────────────────────
 
+@lru_cache(maxsize=256)
 def _geocode_top(address):
     """
     The top Google geocode result (the raw dict) for `address`, or None.
@@ -67,6 +69,11 @@ def _geocode_top(address):
     Never raises on API trouble: quota, timeout, transport and API errors are
     caught and reported as None, so the caller falls through the case ladder
     or returns an honest empty result instead of crashing.
+
+    Memoised per address so one lookup costs one API call even when the address
+    is ranked more than once — the district pass and the cross-district pass in
+    Case 2 both geocode the same string. The same address always resolves to the
+    same point, so reusing it changes no result; it only avoids paying twice.
     """
     try:
         # components= is a hard filter, not a hint: Google answers inside
@@ -889,4 +896,64 @@ def rank_ps_by_distance(input_address, ps_list, district, top_n=TOP_N):
     # Sort by real distance, take top N
     results.sort(key=lambda x: (x["distance_km"], x["police_station"]))
 
+    return RankedResults(results[:top_n], excluded=excluded)
+
+
+def rank_ps_nearby_any_district(input_address, df, top_n=TOP_N):
+    """
+    Rank stations across EVERY district present in `df`, closest first.
+
+    Same cache and same arithmetic as rank_ps_by_distance. The only difference
+    is that the cache key's district comes from each row rather than one fixed
+    district, so a station sitting just the other side of a district boundary
+    is visible instead of being filtered out before distance is ever computed.
+
+    Why this costs nothing extra: station coordinates are read from the prebuilt
+    cache, and the one geocode of `input_address` is memoised on _geocode_top.
+    Scanning every district is therefore arithmetic over rows already in memory
+    — no additional API call, whatever the district count.
+
+    Args:
+        input_address : raw address string from the user
+        df            : DataFrame already narrowed to the search scope (state)
+        top_n         : number of results to return
+
+    Returns:
+        RankedResults of the same dicts rank_ps_by_distance produces, each
+        carrying its own `district`. Empty if the address could not be geocoded.
+    """
+    cache = _load_coords_cache()
+
+    origin_result = geocode_address(input_address)
+    if not origin_result:
+        return RankedResults([], excluded=[])
+    origin_coords, _ = origin_result
+
+    collisions = coordinate_collisions(cache)
+    results, excluded = [], []
+
+    # Deduplicate: the sheet can repeat a (district, station) pair across rows.
+    seen = set()
+    for district, ps in zip(df[COL_DISTRICT], df[COL_PS]):
+        key = (str(district).strip().upper(), str(ps).strip().upper())
+        if key in seen:
+            continue
+        seen.add(key)
+
+        coords = cache.get(key)
+        if coords is None:
+            excluded.append(f"{ps} ({district})")
+            continue
+
+        dist_km = geodesic_distance(origin_coords, coords, unit="km")
+        results.append({
+            "police_station":   ps,
+            "district":         district,
+            "distance":         f"~{round(dist_km, 1)} km",
+            "distance_km":      dist_km,
+            "coordinate_unverified": key in collisions,
+            "resolved_address": "",
+        })
+
+    results.sort(key=lambda x: (x["distance_km"], x["police_station"]))
     return RankedResults(results[:top_n], excluded=excluded)
