@@ -130,6 +130,16 @@ class BannedStatesTest(unittest.TestCase):
         self.assertTrue(out["blocked"])
         self.assertEqual(out["results"], [])
 
+    def test_a_blocked_lookup_writes_no_log_row(self):
+        # Nothing was searched, so there is no outcome to record. A row here
+        # would also count against the match rate it can never contribute to.
+        from v2 import engine
+        with self._with_blocklist({"PUNJAB": ""}):
+            out = engine.find_best_match("", "", "AMRITSAR", self.df, None)
+        with patch.object(lookup_log, "_append_row") as append:
+            lookup_log.log_lookup(out, "an address", "", "", interactive=False)
+        append.assert_not_called()
+
     def test_a_blocked_state_never_appears_in_an_all_states_search(self):
         # No state named, so every state is searched: the blocked one's rows
         # must not be among the candidates at all.
