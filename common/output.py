@@ -51,13 +51,20 @@ def print_output(result):
     # sitting outside it. Mark the district cell so the table does not read as
     # the district filter having failed; the legend below explains the mark.
     outside = any(r.get("outside_stated_district") for r in result["results"])
+    # A station whose stored coordinate is shared with another station has not
+    # been separately located, so its distance is the other one's. The engine
+    # has always known this; until now it never reached the person deciding.
+    shared = any(r.get("coordinate_unverified") for r in result["results"])
     rows = []
     for r in result["results"]:
         surety   = SURETY_LABELS.get(r["confidence"], r["confidence"])
         district = r["district"] + (" *" if r.get("outside_stated_district") else "")
+        distance = r.get("distance", "N/A")
+        if r.get("coordinate_unverified"):
+            distance = f"{distance} !"
         rows.append([r["rank"], r["police_station"], district]
                     + ([r.get("state", "")] if show_state else [])
-                    + [surety, r.get("distance", "N/A")])
+                    + [surety, distance])
 
     print(f"\n{sep}")
     print(tabulate(rows, headers=headers, tablefmt="simple"))
@@ -68,6 +75,11 @@ def print_output(result):
         # (Case 2) or read out of the address (Case 3b). The warning under the
         # table names which one it was.
         print("  * Outside the matched district — shown because it is nearer.")
+    if shared:
+        print("  ! Distance is approximate — this station shares its stored "
+              "coordinate with")
+        print("    another, so it has not been separately located. Treat the "
+              "ranking as a hint.")
     if result.get("method"):
         print(f"  Method: {result['method']}")
 
