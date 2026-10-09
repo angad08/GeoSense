@@ -394,11 +394,28 @@ def clean_station_name(ps):
 _search_names = None
 
 
-def search_name(district, ps):
+def search_name(district, ps, with_mode=False):
     """
     The name to search Google with: the station's entry in SEARCH_ALIAS_FILE
     if it has one, else its sheet name. Search text only — the sheet is never
     changed, and every check still applies to what Google returns.
+
+    An alias row may carry an optional `SEARCH AS` column:
+
+        station  (default) — query "<name> Police Station, <district>, ..."
+        place              — query "<name>, <district>, ..." with no
+                             "Police Station" in it
+
+    `place` exists because for some stations that phrase is actively harmful.
+    Where a station is named after its town and Google has no record of the
+    station itself, "<TOWN> Police Station, <DISTRICT>" does not fail — it
+    matches the *district's own* station and returns it confidently, typed
+    `police`, tens of km from the right place. Asking for the town instead
+    returns the town. Which stations need this is data, not a rule about any
+    region, so it lives in the CSV.
+
+    with_mode=True returns (name, mode); otherwise just the name, so existing
+    callers are unaffected.
     """
     global _search_names
     if _search_names is None:
@@ -409,10 +426,15 @@ def search_name(district, ps):
                 for row in csv.DictReader(f):
                     d, p, s = (str(row.get(k) or "").strip().upper()
                                for k in (COL_DISTRICT, COL_PS, "SEARCH NAME"))
+                    mode = (str(row.get("SEARCH AS") or "station").strip().lower()
+                            or "station")
+                    if mode not in ("station", "place"):
+                        mode = "station"
                     if d and p and s:
-                        _search_names[(d, p)] = s
-    key = (str(district).strip().upper(), str(ps).strip().upper())
-    return _search_names.get(key, ps)
+                        _search_names[(d, p)] = (s, mode)
+    key  = (str(district).strip().upper(), str(ps).strip().upper())
+    name, mode = _search_names.get(key, (ps, "station"))
+    return (name, mode) if with_mode else name
 
 
 def station_geocode_query(ps, district, state):
@@ -428,7 +450,12 @@ def station_geocode_query(ps, district, state):
     state = "" if state is None else str(state).strip()
     if not state:
         return None
-    name = clean_station_name(search_name(district, ps))
+    alias, mode = search_name(district, ps, with_mode=True)
+    name = clean_station_name(alias)
+    if mode == "place":
+        # Deliberately no "Police Station": see search_name() — that phrase is
+        # what makes Google answer with the district's own station instead.
+        return f"{name}, {district}, {state}, India"
     return f"{name} Police Station, {district}, {state}, India"
 
 
