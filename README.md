@@ -15,6 +15,7 @@
 | June 2026 | **Hyderabad & Telangana** — 751 stations, 39 districts | First version: one state, AI-estimated ranking (now v1) |
 | July–Aug 2026 | Telangana | Measured geodesic distance (v2), stored station coordinates, `(district, station)` key, regression harness |
 | Sept–Oct 2026 | **+ Andhra Pradesh** (870 stations, 26 districts) and **+ Tamil Nadu** (1,379 stations, 46 districts) — **3,000 stations, 111 districts** | All region-specific code removed; states are read from the Excel's `STATE` column. TN / AP name formats, coordinate repair for hard-to-find stations |
+| Oct 2026 | Same coverage | Naming a district no longer hides a nearer station across its boundary — found in live use, where a station 0.7 km away was filtered out in favour of ones 5 km away |
 
 Adding the next state is a data change, not a code change — see [Scope & Roadmap](#scope--roadmap). Details per release are in [CHANGELOG.md](CHANGELOG.md).
 
@@ -25,6 +26,7 @@ Adding the next state is a data change, not a code change — see [Scope & Roadm
 | 📐 **A number replaced a guess** | Ranking moved from an estimate to **measured geodesic distance** — reproducible and checkable |
 | 🎯 **No fabricated values** | Every returned value must already exist in the reference table, or it is rejected |
 | 🔁 **Consistent by construction** | Deterministic matching — the answer no longer depends on who ran it |
+| 🧭 **A wrong district stops hiding the answer** | Narrowing to a stated district still measures the rest, so a nearer station over the boundary is shown instead of silently filtered out |
 | 📊 **Measured, not assumed** | A labelled test set and a regression baseline, so changes are proven not hoped (see [How It's Measured](#how-its-measured)) |
 | 💸 **95–99% fewer geocoding calls** | Station coordinates resolved once and stored, not re-fetched every lookup — a median district drops from 19 calls to 1 |
 | 📋 **Auditable** | Every decision logged with its confidence level |
@@ -58,7 +60,7 @@ It works as a **cost-tiered matching pipeline** — each stage is more expensive
 | 1. **Standardise** | Trim and case-normalise the reference table on load, and drop incomplete rows | Free |
 | 2. **Fuzzy match** | Token-based similarity snaps a misspelled name to its canonical row | Free |
 | 3. **Locality scan** | Parses localities out of free-text and matches them against known areas, with guards against low-signal tokens and wide ties | Free |
-| 4. **Geospatial rank** | Geocode the address, rank candidates by measured geodesic distance | 1 API call |
+| 4. **Geospatial rank** | Geocode the address, rank candidates by measured geodesic distance — including the stations a district filter would have excluded, so a nearer one across the boundary is still seen | 1 API call |
 | 5. **Inference** | An LLM infers the district only when the text alone can't | 1 API call |
 
 Stages 4 and 5 run only when the free stages cannot answer. That ordering is deliberate: **the cheapest deterministic method that can answer the question, answers it** — the expensive, non-reproducible steps are a fallback, not the default. How often each stage fires in practice is not yet measured; `LookupLogs` records the case for every lookup, so it will be.
@@ -384,9 +386,11 @@ If Google cannot find a station under any name, type its verified LAT / LNG into
 | Case | You know | GeoSense resolves | Method |
 |---|---|---|---|
 | 1 | Police Station | → District | Fuzzy match against Excel — no AI. If the name exists in several districts, a supplied district selects one; otherwise every valid record is returned to choose from |
-| 2 | District | → Police Station | Fuzzy match district → rank stations by distance |
-| 3 | Only the address | → District + Police Station | Locality scan, then AI infers district → rank |
+| 2 | District | → Police Station | Fuzzy match district → rank its stations by distance, and show any station outside it that is clearly nearer |
+| 3 | Only the address | → District + Police Station | Locality scan, then AI infers district → rank. Wherever this narrows to one district, the same nearer-neighbour check applies |
 | 0 | Nothing usable | — | No result returned |
+
+Any rung that narrows to a district filters **before** distance is measured, so a station just over the boundary would never be ranked however close it is. Each of those rungs therefore measures the whole scope as well and lists a clearly nearer station above the rest, marked `*` — surfaced for comparison, never substituted for the district you asked about. See [See It Work](#see-it-work) for the output.
 
 Confidence shown in the output:
 
@@ -465,8 +469,10 @@ GeoSense/
 | `SIBLING_MAX_KM` / `SIBLING_MIN_COUNT` | `35` / `3` | A geocoded station more than 35 km from every other station of its district **and** placed by Google in another district is a same-name village elsewhere — rejected. `python scripts/build_ps_coords.py --audit [--fix]` re-checks stored coordinates the same way |
 | `FUZZY_CUTOFF` | `80` | Minimum fuzzy score (0–100) to accept a match |
 | `LOCALITY_CUTOFF` | `86` | Stricter cutoff for address-locality scans |
-| `TOP_N` | `3` | Number of results to return |
-| `DISTANCE_WARN_KM` | `30` | v2: flag if the nearest station is farther than this |
+| `TOP_N` | `3` | Number of results to return from the matched district. A nearer station outside it is listed in addition, so a row count above this is expected and explained by the `*` legend |
+| `DISTANCE_WARN_KM` | `30` | v2 (`v2/config.py`): flag if the nearest station is farther than this |
+| `CROSS_DISTRICT_MARGIN_KM` | `1.0` | v2 (`v2/config.py`): how much nearer a station outside the matched district must be before it is shown. Keeps it to a real difference — a neighbour 100 m closer changes no decision |
+| `CROSS_DISTRICT_MAX` | `2` | v2 (`v2/config.py`): most such neighbours to list, nearest first |
 | `AI_PROVIDER` | `anthropic` | `anthropic` \| `openai` \| `gemini` — any one is fully supported |
 | `AI_MODEL` | *(per provider)* | Model map keyed by provider; edit to pin a different model |
 
@@ -497,6 +503,7 @@ Extending it is mostly **data, not development**, because all geography lives in
 - ✅ **More regions** — add any state by adding its rows (with STATE filled) to the station list. No code or config change.
 - ✅ **Richer address parsing** — station-code prefixes (Chennai's `K-4 ANNANAGAR`), joined/split words (ANNA NAGAR vs ANNANAGAR), `P.S` suffixes, all-women stations in either format (`ALL WOMEN PS BODI` = `BODI AWPS`), and names with a bracket or `U/G` (`MYDUKUR U/G` matches "MYDUKUR") — the short form is used only when no other station shares it, so `SIRPUR(U)` never answers for SIRPUR TOWN.
 - ✅ **Relisted stations** — a station listed under two districts at the same point (e.g. Tamil Nadu's VELLORE / RANIPET rows after the 2019 split) is shown once, naming both districts. The sheet keeps both rows.
+- ✅ **District boundaries** — a district narrows the search without hiding the answer: a station clearly nearer on the other side of the boundary is still measured and shown, marked `*`. This matters because an applicant writing a city name may mean something wider than the district of that name, and because district lines do not follow distance.
 - 🔜 **Batch mode** — resolve a whole sheet of addresses in one pass.
 - 🔜 **API / web front-end** — offer resolution as a service.
 
