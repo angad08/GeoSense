@@ -529,7 +529,8 @@ def place_name_matches(top, expected):
     return False
 
 
-def evaluate_station_query(district, ps, query, quiet=False, expect_place=None):
+def evaluate_station_query(district, ps, query, quiet=False, expect_place=None,
+                           reasons=None):
     """
     Run one candidate query through every acceptance check.
 
@@ -547,6 +548,11 @@ def evaluate_station_query(district, ps, query, quiet=False, expect_place=None):
     key = (str(district).strip().upper(), str(ps).strip().upper())
 
     def warn(msg):
+        # A quiet caller is walking a ladder, but the reason must not be lost:
+        # a station that fails every phrasing is exactly the one a human has to
+        # judge, and "see warning above" would show only the first attempt.
+        if reasons is not None:
+            reasons.append(msg.replace("  [WARN] ", "").strip())
         if not quiet:
             print(msg)
 
@@ -693,24 +699,29 @@ def resolve_station(district, ps, state, quiet=True):
     """
     Try each candidate phrasing until one passes the guards.
 
-    Returns (coords, search_name, mode, why) on success, or (None, ...) when
-    every candidate was refused — in which case the station stays blank and is
-    reported for a human, exactly as before.
+    Returns (coords, search_name, mode, why, attempts). On failure the first
+    four are None and `attempts` is the full trail — every query tried and why
+    it was refused — so the station that needs a human arrives with the evidence
+    attached instead of "see warning above".
 
     Only stations the default phrasing already failed on reach the later rungs,
     so the common case still costs one call. A station that fails entirely costs
     one call per candidate — a handful, once, against never resolving it.
     """
+    attempts = []
     for name, mode, why in _query_candidates(ps, district, state):
         query = build_station_query(name, mode, district, state)
         if query is None:
-            return None, None, None, None
+            return None, None, None, None, attempts
+        reasons = []
         coords = evaluate_station_query(
             district, ps, query, quiet=quiet,
-            expect_place=name if mode == "place" else None)
+            expect_place=name if mode == "place" else None,
+            reasons=reasons)
         if coords:
-            return coords, name, mode, why
-    return None, None, None, None
+            return coords, name, mode, why, attempts
+        attempts.append((query, reasons[0] if reasons else "refused"))
+    return None, None, None, None, attempts
 
 
 # ── Re-placing stacked stations ───────────────────────────────────────────────

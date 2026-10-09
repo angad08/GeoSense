@@ -208,7 +208,7 @@ def main():
     print(f"Geocoding {total} station(s) — one line each. The Excel is saved "
           f"once, at the end.\n", flush=True)
 
-    pending_alias = {}
+    pending_alias, tried = {}, {}
 
     for n, (district, ps) in enumerate(missing, start=1):
         coords = geocode_station(district, ps)   # None → skipped, failed or rejected
@@ -220,7 +220,13 @@ def main():
             # run — and the next state added — does not have to search again.
             state = _state_cache.get((str(district).strip().upper(),
                                       str(ps).strip().upper()), "")
-            coords, name, mode, why = resolve_station(district, ps, state)
+            coords, name, mode, why, attempts = resolve_station(district, ps, state)
+            if not coords and attempts:
+                # Every phrasing was refused. Show the whole trail — the query
+                # sent, and what came back — because this is the station a human
+                # now has to resolve, and guessing from one line costs more than
+                # printing four.
+                tried[(district, ps)] = attempts
             if coords:
                 how = f" (resolved: {why})"
                 # Held, not written yet: the batch sibling re-check below can
@@ -297,6 +303,14 @@ def main():
     print(f"\nNot filled (skipped / failed / rejected) : {len(failed)}")
     for name in failed:
         print(f"    - {name}")
+        # The trail for this station, if the ladder ran: every query sent and
+        # what came back. This is what turns "still blank" into something a
+        # person can act on without re-running anything.
+        for (d, p), attempts in tried.items():
+            if name == f"{p} ({d})":
+                for query, reason in attempts:
+                    print(f"        tried: {query}")
+                    print(f"               -> {reason}")
 
     if failed:
         print("\nEvery phrasing was refused for these, so they need a human: "
