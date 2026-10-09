@@ -43,7 +43,7 @@ Usage (from the project root, with the Excel file CLOSED):
 
 import argparse
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 # Make the project root importable no matter how this file is launched.
@@ -56,6 +56,8 @@ from v2.geopy_distance import (
     geocode_station, station_geocode_query, audit_station,
     coordinate_collisions, geocode_station_place,
     resolve_station, record_alias,
+    _geocode_top, _coords_and_formatted, geodesic_distance,
+    station_place_name, _ROLE_WORDS,
 )
 
 NO_STATE = "(STATE blank - would be skipped)"
@@ -151,6 +153,161 @@ def restack(cache, fix, limit=0):
               "(close the Excel first).")
 
 
+def towns(cache, fix, limit=0):
+    """
+    Find stations whose stored coordinate is really their district's town.
+
+    The failure this catches: asked for a station Google does not know, Google
+    answers with another police station in that district — right state, right
+    district, surrounded by siblings, typed `police`. Every existing check
+    passes. Only a collision catches it, and only when two stations land
+    together; one alone is written silently. Confirmed three times by hand
+    (BAHAV WALA, A DIVISION, CANAL COLONY).
+
+    Name similarity cannot separate this from ordinary spelling variance —
+    measured at 27% false rejections on stations that are already correct, so
+    that route is closed. Position can: the bad answers all sit on the district
+    town, and a station named after somewhere else should not.
+
+    Cost is one geocode per district, not per station — 139 for the whole sheet.
+
+    Stations whose own name IS their district (CITY FARIDKOT in FARIDKOT) are
+    skipped: being at the district town is correct for them, so the test cannot
+    say anything. They are reported separately, not judged.
+
+    Preview unless fix=True. With --fix each suspect is re-resolved through the
+    ladder; a station that resolves somewhere else is moved, one that does not
+    is cleared — blank beats wrong.
+    """
+    import json
+    import re as _re
+    from rapidfuzz import fuzz
+
+    SUSPECT_KM   = 0.75
+    SAME_AS_DIST = 80      # fuzzy, because the sheet's district spelling and the
+                           # station's own differ: ANANTAPUR RURAL in
+                           # ANANTHAPURAMU scores 81 and is correctly at the town
+
+    # District town points are reused across runs: --towns and --towns --fix
+    # would otherwise each pay for all 139, and they never change.
+    town_cache_file = EXCEL_FILE.parent / "district_towns.json"
+    town_cache = {}
+    if town_cache_file.exists():
+        try:
+            town_cache = {k: tuple(v) for k, v in
+                          json.loads(town_cache_file.read_text(encoding="utf-8")).items()}
+        except Exception:
+            town_cache = {}
+
+    by_district = defaultdict(list)
+    for (d, p), coords in cache.items():
+        if coords:
+            by_district[d].append((p, coords))
+
+    districts = sorted(by_district)
+    if limit > 0:
+        districts = districts[:limit]
+        print(f"--limit {limit}: only the first {len(districts)} districts.\n")
+
+    print(f"Locating {len(districts)} district town(s) — one Geocoding call each.\n",
+          flush=True)
+
+    suspects, skipped_same_name, no_town = [], [], []
+
+    for n, d in enumerate(districts, start=1):
+        state = ""
+        for (dd, pp), _c in cache.items():
+            if dd == d:
+                state = _state_cache.get((dd, pp), "")
+                if state:
+                    break
+        if not state:
+            continue
+
+        bare = _re.sub(r"\s*\(.*?\)", "", d).strip()
+        if d in town_cache:
+            town = town_cache[d]
+        else:
+            top = _geocode_top(f"{bare}, {state}, India")
+            if not top:
+                no_town.append(d)
+                print(f"  [{n}/{len(districts)}] {d}: town not found — skipped", flush=True)
+                continue
+            town = _coords_and_formatted(top)[0]
+            town_cache[d] = town
+
+        hits = 0
+        for p, coords in by_district[d]:
+            # station_place_name only — do NOT pre-strip with _ROLE_WORDS.
+            # It removes "TOWN", which is the very word station_place_name needs
+            # to recognise "ADILABAD I TOWN" as Adilabad; stripped first it
+            # yields "ADILABAD I", which then fails to match its own district
+            # and a correct town station gets flagged as a suspect.
+            anchor = station_place_name(p).strip().upper()
+            if fuzz.ratio(anchor, bare.upper()) >= SAME_AS_DIST:
+                skipped_same_name.append((d, p))
+                continue
+            if geodesic_distance(coords, town) <= SUSPECT_KM:
+                suspects.append((d, p, coords, town, state))
+                hits += 1
+        if hits:
+            print(f"  [{n}/{len(districts)}] {d}: {hits} station(s) sitting on the town",
+                  flush=True)
+
+    try:
+        town_cache_file.write_text(
+            json.dumps({k: list(v) for k, v in town_cache.items()}, indent=1),
+            encoding="utf-8")
+    except Exception as e:
+        print(f"  [WARN] could not save district town cache: {e}")
+
+    print(f"\nSuspects  : {len(suspects)}  (within {SUSPECT_KM} km of their district town,"
+          f" and not named after it)")
+    print(f"Not judged: {len(skipped_same_name)} named after their own district"
+          f" | {len(no_town)} district town not found")
+
+    for d, p, _c, _t, _s in suspects[:40]:
+        print(f"    - {p} ({d})")
+    if len(suspects) > 40:
+        print(f"    ... and {len(suspects) - 40} more")
+
+    if not fix:
+        print("\nPreview only — nothing written. Re-run with --fix to repair.")
+        return
+
+    # Move only; never clear. Sitting near the district town is evidence, not
+    # proof: some districts geocode to a point that legitimately has stations
+    # around it, and a compound name (CYBERABAD-MEDCHAL) can anchor almost
+    # anywhere. Clearing on that basis would blank correct stations, which is
+    # the opposite of what "blank beats wrong" is for — it protects against
+    # writing a guess, not against keeping a coordinate we merely doubt.
+    #
+    # A suspect that re-resolves somewhere else is good evidence it was wrong,
+    # so that one is moved. The rest are reported for a human.
+    moved, unresolved = [], []
+    for d, p, old, town, state in suspects:
+        coords, name, mode, why, _att = resolve_station(d, p, state)
+        if coords and geodesic_distance(coords, town) > SUSPECT_KM:
+            moved.append((d, p, coords[0], coords[1]))
+            print(f"  MOVE   {p} ({d}) -> {geodesic_distance(old, coords):.1f} km away"
+                  f" [{mode}]", flush=True)
+        else:
+            unresolved.append(f"{p} ({d})")
+
+    if moved:
+        _write_coords(moved)
+
+    print(f"\nMoved {len(moved)} | left alone {len(unresolved)}")
+    if unresolved:
+        print("\nStill sitting on their district town, and no better point found.")
+        print("Left as they are — too uncertain to blank automatically. Check these"
+              " by hand:")
+        for name in unresolved[:40]:
+            print(f"    - {name}")
+        if len(unresolved) > 40:
+            print(f"    ... and {len(unresolved) - 40} more")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Fill missing station LAT/LNG in the PoliceStation sheet.")
@@ -168,6 +325,10 @@ def main():
                         help="move stations that share a point with differently "
                              "named stations to their own village / town "
                              "(one Geocoding call each; preview unless --fix)")
+    parser.add_argument("--towns", action="store_true",
+                        help="find stations whose stored coordinate is really "
+                             "their district's town (one Geocoding call per "
+                             "district; preview unless --fix)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the geocode queries and per-state counts; "
                              "no API calls, no writes")
@@ -186,6 +347,10 @@ def main():
 
     if args.restack:
         restack(cache, args.fix, args.limit)
+        return
+
+    if args.towns:
+        towns(cache, args.fix, args.limit)
         return
 
     if not missing:
