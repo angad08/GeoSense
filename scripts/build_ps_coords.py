@@ -50,11 +50,12 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from common.config import EXCEL_FILE, SHEET_NAME
+from common.config import EXCEL_FILE, SHEET_NAME, SEARCH_ALIAS_FILE
 from v2.geopy_distance import (
     _load_coords_cache, _state_cache, _write_coords, _clear_coords,
     geocode_station, station_geocode_query, audit_station,
     coordinate_collisions, geocode_station_place,
+    resolve_station, record_alias,
 )
 
 NO_STATE = "(STATE blank - would be skipped)"
@@ -207,13 +208,27 @@ def main():
     print(f"Geocoding {total} station(s) — one line each. The Excel is saved "
           f"once, at the end.\n", flush=True)
 
+    pending_alias = {}
+
     for n, (district, ps) in enumerate(missing, start=1):
         coords = geocode_station(district, ps)   # None → skipped, failed or rejected
         tag    = f"  [{n:>{width}}/{total}]"
         how    = ""
         if not coords:
-            # The station search failed; the village / town it is named after,
-            # under the same checks, is the next-best location.
+            # The default phrasing failed. Walk the ladder of alternatives
+            # before giving up, and remember whichever one works so the next
+            # run — and the next state added — does not have to search again.
+            state = _state_cache.get((str(district).strip().upper(),
+                                      str(ps).strip().upper()), "")
+            coords, name, mode, why = resolve_station(district, ps, state)
+            if coords:
+                how = f" (resolved: {why})"
+                # Held, not written yet: the batch sibling re-check below can
+                # still reject this coordinate, and an alias recorded for a
+                # rejected point would claim a phrasing works when it does not.
+                pending_alias[(district, ps)] = (name, mode, why)
+        if not coords:
+            # Last resort: the village / town it is named after, same checks.
             coords, detail = geocode_station_place(district, ps, cache)
             how = f" (its town: {detail.split(',')[0]})" if coords else ""
 
@@ -260,14 +275,36 @@ def main():
         print(f"\nSaving {len(updates)} coordinate(s) to {EXCEL_FILE.name} ...", flush=True)
         _write_coords(updates)
 
+    # Only now, for the coordinates that actually survived every check. A
+    # phrasing is only "known to work" if what it produced was good enough to
+    # write; recording it earlier would put a false claim in the alias file.
+    learned = []
+    for d, p, _la, _ln in updates:
+        found = pending_alias.get((d, p))
+        if found and record_alias(d, p, *found):
+            learned.append(f"{p} ({d}) -> {found[0]} [{found[1]}] — {found[2]}")
+
     print(f"\nGeocoded : {len(updates)}")
-    print(f"Not filled (skipped / failed / rejected) : {len(failed)}")
+
+    if learned:
+        print(f"\nLearned {len(learned)} new search alias(es) — written to "
+              f"{SEARCH_ALIAS_FILE.name}, so these resolve directly next time:")
+        for line in learned:
+            print(f"    - {line}")
+        print("  Review them like any other data: the NOTE column says what "
+              "each one assumed.")
+
+    print(f"\nNot filled (skipped / failed / rejected) : {len(failed)}")
     for name in failed:
         print(f"    - {name}")
 
     if failed:
-        print("\nThese are still blank. Review their search aliases, STATE and "
-              "verified locations before another explicit build run.")
+        print("\nEvery phrasing was refused for these, so they need a human: "
+              "check the station name and STATE in the Excel, or add a row to "
+              f"{SEARCH_ALIAS_FILE.name} with a name that does exist (SEARCH AS "
+              "= place for a town, station for a station). Two stations sharing "
+              "one town cannot be separated by geocoding at all — those need "
+              "coordinates read off a map.")
 
 
 if __name__ == "__main__":

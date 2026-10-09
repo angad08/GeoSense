@@ -447,11 +447,24 @@ def station_geocode_query(ps, district, state):
     repeat across states, so a guessed state yields a confident wrong location,
     and a wrong coordinate once written is never retried.
     """
+    alias, mode = search_name(district, ps, with_mode=True)
+    return build_station_query(alias, mode, district, state)
+
+
+def build_station_query(name, mode, district, state):
+    """
+    One station query from an explicit name and mode, bypassing the alias file.
+
+    Shared by station_geocode_query (which looks the alias up) and the resolver
+    (which is trying candidates that have no alias yet), so both phrase a query
+    identically and only the name and mode differ.
+
+    Returns None when STATE is blank — see station_geocode_query.
+    """
     state = "" if state is None else str(state).strip()
     if not state:
         return None
-    alias, mode = search_name(district, ps, with_mode=True)
-    name = clean_station_name(alias)
+    name = clean_station_name(name)
     if mode == "place":
         # Deliberately no "Police Station": see search_name() — that phrase is
         # what makes Google answer with the district's own station instead.
@@ -488,45 +501,216 @@ def geocode_station(district, ps):
               f"'{SHEET_NAME}' — not geocoded, left blank.")
         return None
 
+    return evaluate_station_query(district, ps, query)
+
+
+def place_name_matches(top, expected):
+    """
+    True when the result really names `expected`, not some larger place it sits in.
+
+    A "place" query carries a failure the station checks cannot see: ask for a
+    village Google does not know and it answers with the district town, which is
+    in the right state, in the right district, and surrounded by sibling
+    stations — so every other guard passes. Measured: BAHAV WALA (FAZILKA)
+    resolved to a point 0.43 km from Fazilka town centre.
+
+    Same test geocode_station_place uses — similar spelling AND similar length,
+    so "NALLUR" cannot answer for "T.V.NALLUR".
+    """
+    names = [c["long_name"] for c in top.get("address_components", [])
+             if set(c.get("types", [])) & PLACE_TYPES]
+    target = _distinct_name(expected)
+    for found in names:
+        found = _distinct_name(found)
+        short, long_ = sorted((len(target), len(found)))
+        if (fuzz.ratio(target, found) >= STATION_PLACE_MATCH
+                and long_ and short / long_ >= 0.8):
+            return True
+    return False
+
+
+def evaluate_station_query(district, ps, query, quiet=False, expect_place=None):
+    """
+    Run one candidate query through every acceptance check.
+
+    Split out of geocode_station so the resolver below can try several phrasings
+    against the identical guards — a candidate found by a different phrasing is
+    held to exactly the same standard as the default one, never a looser one.
+
+    `expect_place` names what a "place" query asked for. It is checked against
+    the result, because a place query that misses falls back to the district
+    town and passes every other guard. Station queries leave it None.
+
+    quiet=True suppresses the per-rejection warnings, for when a caller is
+    walking a ladder and only the final outcome matters.
+    """
+    key = (str(district).strip().upper(), str(ps).strip().upper())
+
+    def warn(msg):
+        if not quiet:
+            print(msg)
+
     top = _geocode_top(query)                    # returns None on any failure
     if not top:
-        print(f"  [WARN] Could not geocode station: {query}")
+        warn(f"  [WARN] Could not geocode station: {query}")
         return None
 
     (lat, lng), formatted = _coords_and_formatted(top)
     if not coords_in_envelope(lat, lng):
-        print(f"  [WARN] Rejected {ps} ({district}): ({lat}, {lng}) "
-              f"'{formatted}' is outside India — left blank.")
+        warn(f"  [WARN] Rejected {ps} ({district}): ({lat}, {lng}) "
+             f"'{formatted}' is outside India — left blank.")
+        return None
+
+    if expect_place and not place_name_matches(top, expect_place):
+        warn(f"  [WARN] Rejected {ps} ({district}): asked for the place "
+             f"'{expect_place}' but Google answered '{formatted}' — most likely "
+             f"the district town, not the station's own place. Left blank.")
         return None
 
     vague = vague_result_type(top)
     if vague:
-        print(f"  [WARN] Rejected {ps} ({district}): Google did not find the "
-              f"station, only the area centre ({vague}: '{formatted}') — left "
-              f"blank. Check the station name in the Excel.")
+        warn(f"  [WARN] Rejected {ps} ({district}): Google did not find the "
+             f"station, only the area centre ({vague}: '{formatted}') — left "
+             f"blank. Check the station name in the Excel.")
         return None
 
     sheet_state, google_state = _state_cache.get(key, ""), result_state(top)
     if google_state and not google_state.isascii():
         google_state = _english_state_at(lat, lng) or google_state
     if not same_state(sheet_state, google_state):
-        print(f"  [WARN] Rejected {ps} ({district}): Google placed it in "
-              f"'{google_state or 'no state'}', sheet says '{sheet_state}' "
-              f"('{formatted}') — left blank. If both name the same state, "
-              f"fix the spelling in the STATE column.")
+        warn(f"  [WARN] Rejected {ps} ({district}): Google placed it in "
+             f"'{google_state or 'no state'}', sheet says '{sheet_state}' "
+             f"('{formatted}') — left blank. If both name the same state, "
+             f"fix the spelling in the STATE column.")
         return None
 
     km = isolated_from_siblings(key, lat, lng, _load_coords_cache())
     google_district = result_district(top)
     if km and not same_district(district, google_district):
-        print(f"  [WARN] Rejected {ps} ({district}): Google placed it in "
-              f"'{google_district or 'unknown district'}' ('{formatted}'), "
-              f"{km:.0f} km from every other station in {district} — likely a "
-              f"same-name place elsewhere, left blank. Check the station name "
-              f"in the Excel.")
+        warn(f"  [WARN] Rejected {ps} ({district}): Google placed it in "
+             f"'{google_district or 'unknown district'}' ('{formatted}'), "
+             f"{km:.0f} km from every other station in {district} — likely a "
+             f"same-name place elsewhere, left blank. Check the station name "
+             f"in the Excel.")
         return None
 
     return lat, lng
+
+
+# ── Resolving a station the default query cannot find ─────────────────────────
+# Adding a state regularly brings a handful of stations the default phrasing
+# cannot reach, and each one used to need a human to work out why and hand-write
+# an alias. The reasons repeat, so they are worth encoding once:
+#
+#   - the station is named after its town, and "<TOWN> Police Station" makes
+#     Google answer with the *district's* station instead (Punjab's DHANAULA
+#     returned Barnala's own station, 10 km away, typed `police`);
+#   - the name carries a rank or role word — CITY, SADAR, KOTWALI — that is not
+#     part of any place name, so the query describes a station Google has never
+#     heard of.
+#
+# The ladder tries the alternatives in order of how much it is assuming, and
+# stops at the first that passes the same guards as the default. Nothing is
+# loosened: a candidate is accepted only on evidence the default would have
+# needed too.
+
+# Rank / role words that qualify a station but name no place.
+_ROLE_WORDS = re.compile(
+    r"(?i)^(?:CITY|SADAR|SDR|KOTWALI|TOWN)\s+|\s+(?:CITY|SADAR|SDR|KOTWALI|TOWN)$")
+
+
+def _query_candidates(ps, district, state):
+    """
+    Phrasings to try for one station, most conservative first, de-duplicated.
+
+    Each entry is (search_name, mode, why) — `why` is recorded in the alias file
+    so a later reader can see what was assumed, not just what was written.
+    """
+    name = str(ps).strip()
+    out, seen = [], set()
+
+    def add(n, mode, why):
+        n = str(n).strip()
+        if not n or (n.upper(), mode) in seen:
+            return
+        seen.add((n.upper(), mode))
+        out.append((n, mode, why))
+
+    add(name, "station", "default phrasing")
+    add(name, "place", "named after its town; asked as a place")
+
+    stripped = _ROLE_WORDS.sub("", name).strip()
+    if stripped and stripped.upper() != name.upper():
+        add(stripped, "station", "rank word (CITY/SADAR/...) dropped")
+        add(stripped, "place", "rank word dropped; asked as a place")
+
+    add(station_place_name(name), "place", "qualifier dropped; asked as a place")
+    return out
+
+
+def record_alias(district, ps, name, mode, why):
+    """
+    Write a working phrasing into SEARCH_ALIAS_FILE so it is never rediscovered.
+
+    This is what makes the next state cheap: the resolver pays for the search
+    once, and the alias file then carries the answer as reviewable data. The
+    `why` goes in a NOTE column — a reader can see what was assumed rather than
+    having to re-derive it.
+
+    Existing rows are never altered; a station that already has an alias is left
+    alone, because a hand-written one outranks a guessed one.
+    """
+    import csv
+
+    key = (str(district).strip().upper(), str(ps).strip().upper())
+    fields = ["DISTRICT", "POLICE STATION", "SEARCH NAME", "SEARCH AS", "NOTE"]
+
+    rows, seen = [], set()
+    if SEARCH_ALIAS_FILE.exists():
+        with open(SEARCH_ALIAS_FILE, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                rows.append(row)
+                seen.add((str(row.get("DISTRICT") or "").strip().upper(),
+                          str(row.get("POLICE STATION") or "").strip().upper()))
+    if key in seen:
+        return False
+
+    rows.append({"DISTRICT": key[0], "POLICE STATION": key[1],
+                 "SEARCH NAME": str(name).strip().upper(),
+                 "SEARCH AS": mode, "NOTE": why})
+    with open(SEARCH_ALIAS_FILE, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in fields})
+
+    global _search_names
+    _search_names = None            # force reload on next lookup
+    return True
+
+
+def resolve_station(district, ps, state, quiet=True):
+    """
+    Try each candidate phrasing until one passes the guards.
+
+    Returns (coords, search_name, mode, why) on success, or (None, ...) when
+    every candidate was refused — in which case the station stays blank and is
+    reported for a human, exactly as before.
+
+    Only stations the default phrasing already failed on reach the later rungs,
+    so the common case still costs one call. A station that fails entirely costs
+    one call per candidate — a handful, once, against never resolving it.
+    """
+    for name, mode, why in _query_candidates(ps, district, state):
+        query = build_station_query(name, mode, district, state)
+        if query is None:
+            return None, None, None, None
+        coords = evaluate_station_query(
+            district, ps, query, quiet=quiet,
+            expect_place=name if mode == "place" else None)
+        if coords:
+            return coords, name, mode, why
+    return None, None, None, None
 
 
 # ── Re-placing stacked stations ───────────────────────────────────────────────
