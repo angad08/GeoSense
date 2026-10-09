@@ -179,7 +179,7 @@ def towns(cache, fix, limit=0):
     ladder; a station that resolves somewhere else is moved, one that does not
     is cleared — blank beats wrong.
     """
-    import json
+    import csv
     import re as _re
     from rapidfuzz import fuzz
 
@@ -190,12 +190,23 @@ def towns(cache, fix, limit=0):
 
     # District town points are reused across runs: --towns and --towns --fix
     # would otherwise each pay for all 139, and they never change.
-    town_cache_file = EXCEL_FILE.parent / "district_towns.json"
+    #
+    # CSV rather than JSON so it opens in Excel like the rest of the project's
+    # reference data, and so a bad anchor can be corrected by hand. That matters:
+    # a district whose name geocodes poorly (a compound like CYBERABAD-MEDCHAL)
+    # drags its stations into the suspect list, and editing one row here fixes
+    # the whole district. Delete the file and the next run simply refetches.
+    town_cache_file = EXCEL_FILE.parent / "district_towns.csv"
     town_cache = {}
     if town_cache_file.exists():
         try:
-            town_cache = {k: tuple(v) for k, v in
-                          json.loads(town_cache_file.read_text(encoding="utf-8")).items()}
+            with open(town_cache_file, newline="", encoding="utf-8-sig") as fh:
+                for row in csv.DictReader(fh):
+                    d = str(row.get("DISTRICT") or "").strip().upper()
+                    try:
+                        town_cache[d] = (float(row["LAT"]), float(row["LNG"]))
+                    except (TypeError, ValueError, KeyError):
+                        continue        # blank or hand-edited badly: refetch it
         except Exception:
             town_cache = {}
 
@@ -209,7 +220,11 @@ def towns(cache, fix, limit=0):
         districts = districts[:limit]
         print(f"--limit {limit}: only the first {len(districts)} districts.\n")
 
-    print(f"Locating {len(districts)} district town(s) — one Geocoding call each.\n",
+    cached = sum(1 for d in districts if d in town_cache)
+    todo   = len(districts) - cached
+    print(f"District towns: {len(districts)} needed — {cached} already in "
+          f"{town_cache_file.name}, {todo} to look up"
+          f"{' (one Geocoding call each)' if todo else ' — no API calls'}.\n",
           flush=True)
 
     suspects, skipped_same_name, no_town = [], [], []
@@ -254,10 +269,26 @@ def towns(cache, fix, limit=0):
             print(f"  [{n}/{len(districts)}] {d}: {hits} station(s) sitting on the town",
                   flush=True)
 
+    # Rewritten in full, preserving any NOTE a human left on a row.
     try:
-        town_cache_file.write_text(
-            json.dumps({k: list(v) for k, v in town_cache.items()}, indent=1),
-            encoding="utf-8")
+        notes = {}
+        if town_cache_file.exists():
+            with open(town_cache_file, newline="", encoding="utf-8-sig") as fh:
+                for row in csv.DictReader(fh):
+                    notes[str(row.get("DISTRICT") or "").strip().upper()] = \
+                        row.get("NOTE", "")
+        with open(town_cache_file, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["DISTRICT", "STATE", "LAT", "LNG", "NOTE"])
+            for d in sorted(town_cache):
+                la, ln = town_cache[d]
+                st = ""
+                for (dd, pp) in cache:
+                    if dd == d:
+                        st = _state_cache.get((dd, pp), "")
+                        if st:
+                            break
+                w.writerow([d, st, f"{la:.7f}", f"{ln:.7f}", notes.get(d, "")])
     except Exception as e:
         print(f"  [WARN] could not save district town cache: {e}")
 
