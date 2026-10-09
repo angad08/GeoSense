@@ -93,7 +93,11 @@ def log_lookup(result, address, known_ps, known_district,
     """
     results = result.get("results", [])
 
-    lookup_label = LOOKUP_LABELS.get(result["case"])
+    # A blocked state is not a matcher failure. Logging it as NO RESULT would
+    # count it against the match rate in LookupLogs, making the matcher look
+    # worse every time the owner blocks a state — so it gets its own label.
+    lookup_label = ("BLOCKED" if result.get("blocked")
+                    else LOOKUP_LABELS.get(result["case"]))
     if lookup_label is None:
         return
 
@@ -135,6 +139,12 @@ def log_lookup(result, address, known_ps, known_district,
         print(f"\n  [LOG] Saved to '{LOG_SHEET_NAME}': "
               f"{record.get('police_station', '')} | {record.get('district', '')} | "
               f"{lookup_label} | {match_label}")
+    elif result.get("blocked"):
+        # Nothing to fill in: the state is blocked, so no station was ever a
+        # candidate. Telling the officer to complete the row by hand would be
+        # asking them to do the thing the block exists to prevent.
+        print(f"\n  [LOG] Saved to '{LOG_SHEET_NAME}': {lookup_label} | "
+              f"state blocked — no station was looked up, nothing to fill in")
     else:
         print(f"\n  [LOG] Saved to '{LOG_SHEET_NAME}': {lookup_label} | "
               f"no selection — PREDICTED PS, PREDICTED DISTRICT and RESULT MATCH "

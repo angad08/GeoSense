@@ -157,14 +157,19 @@ def _blocked_result(state, state_scope):
     results) so the CLI, the log and anything else reading these dicts need no
     special case. The empty `results` is what stops a station being shown; the
     warning is what stops it being mistaken for "nothing found".
+
+    `state_scope` is rewritten rather than passed through: filter_by_state's
+    line says "only PUNJAB stations searched", which flatly contradicts a
+    refusal — nothing was searched.
     """
+    name = str(state).strip().upper()
     return {
         "case":        0,
         "confidence":  "NONE",
-        "method":      f"Blocked state: {str(state).strip().upper()} — lookup refused",
+        "method":      f"Blocked state: {name} — lookup refused",
         "results":     [],
         "warning":     banned_message(state),
-        "state_scope": state_scope,
+        "state_scope": f"State: {name} — blocked, nothing was searched",
         "blocked":     True,
     }
 

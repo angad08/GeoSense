@@ -33,7 +33,13 @@ def print_output(result):
     """
     sep = "-" * 50
     if not result["results"]:
-        print(f"\n{sep}\nNo nearby stations could be ranked.\n{sep}")
+        # A refusal is not a failed search. "No nearby stations could be ranked"
+        # invites the reader to go looking for one; a blocked state has nothing
+        # to look for until the owner approves it.
+        headline = ("Lookup refused — this state is blocked."
+                    if result.get("blocked")
+                    else "No nearby stations could be ranked.")
+        print(f"\n{sep}\n{headline}\n{sep}")
         if result.get("method"):
             print(f"  Method: {result['method']}")
         if result.get("state_scope"):
