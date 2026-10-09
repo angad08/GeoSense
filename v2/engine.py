@@ -28,7 +28,7 @@ All distance ranking uses real coordinates from the Geocoding API.
 from v2.config import (
     COL_DISTRICT, COL_PS, COL_STATE, TOP_N, FUZZY_CUTOFF,
     DISTANCE_WARN_KM, AI_PROVIDER, AI_MODEL,
-    CROSS_DISTRICT_MARGIN_KM, CROSS_DISTRICT_MAX,
+    CROSS_DISTRICT_MARGIN_KM, CROSS_DISTRICT_MAX, MAX_RESULTS,
 )
 from common.matcher import (
     find_ps_in_excel,
@@ -182,6 +182,22 @@ def _neighbour_rows(neighbours):
         "coordinate_unverified": n.get("coordinate_unverified", False),
         "outside_stated_district": True,
     } for i, n in enumerate(neighbours)]
+
+
+def _capped(neighbour_rows, district_rows):
+    """
+    Neighbours first, then the matched district's own ranking, capped at
+    MAX_RESULTS and renumbered from 1.
+
+    Every rung assembles its table through here, so the ceiling cannot be
+    missed by one of them. Neighbours lead, so trimming drops the farthest of
+    the district's candidates rather than the nearest station found — the list
+    stays short enough to compare at a glance without losing the reason it grew.
+    """
+    merged = (neighbour_rows + district_rows)[:MAX_RESULTS]
+    for i, row in enumerate(merged):
+        row["rank"] = i + 1
+    return merged
 
 
 def _neighbour_warning(neighbours, matched_label, ranked, source):
@@ -388,8 +404,8 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
 
             # Nearer neighbours lead, so the closest station is visible first;
             # the stated district's own ranking follows intact below.
-            neighbours = _nearer_in_other_districts(address, df, matched_dist, ranked)
-            results    = _neighbour_rows(neighbours)
+            neighbours     = _nearer_in_other_districts(address, df, matched_dist, ranked)
+            district_rows  = []
 
             for i, item in enumerate(ordered[:TOP_N]):
                 if not address.strip():
@@ -400,7 +416,7 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
                 else:
                     confidence = "MEDIUM"
                 entry = {
-                    "rank":             len(results) + 1,
+                    "rank":             i + 1,          # renumbered by _capped
                     "police_station":   item["police_station"],
                     "district":         item.get("district", matched_dist),
                     "confidence":       confidence,
@@ -410,7 +426,9 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
                 }
                 if "match_score" in item:
                     entry["match_score"] = item["match_score"]
-                results.append(entry)
+                district_rows.append(entry)
+
+            results = _capped(_neighbour_rows(neighbours), district_rows)
 
             if pinned:
                 method = (
@@ -556,11 +574,9 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
                 # before distance is measured. The district came from the text
                 # rather than the officer, but it is no less able to be loose —
                 # a zone name can read as one district and sit beside another.
-                neighbours = _nearer_in_other_districts(address, df, matched_dist, ranked)
-                results    = _neighbour_rows(neighbours)
-
-                results += [{
-                    "rank":             len(results) + i + 1,
+                neighbours    = _nearer_in_other_districts(address, df, matched_dist, ranked)
+                district_rows = [{
+                    "rank":             i + 1,          # renumbered by _capped
                     "police_station":   r["police_station"],
                     "district":         r["district"],
                     "confidence":       "HIGH" if i == 0 else "MEDIUM",
@@ -568,6 +584,7 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
                     "resolved_address": r.get("resolved_address", ""),
                     "coordinate_unverified": r.get("coordinate_unverified", False),
                 } for i, r in enumerate(ranked)]
+                results = _capped(_neighbour_rows(neighbours), district_rows)
 
                 method = (f"Locality '{dist_hits[0]['locality']}' from address matched "
                           f"District: {matched_dist} ({dist_hits[0]['score']}%) | "
@@ -677,9 +694,7 @@ def _find_best_match(address, known_ps, known_district, df, ai_client, state_nam
             searched   = [str(d) for d in inferred_districts[:2]]
             neighbours = _nearer_in_other_districts(address, df, searched, all_results)
 
-            results = _neighbour_rows(neighbours) + all_results[:TOP_N]
-            for i, r in enumerate(results):
-                r["rank"] = i + 1
+            results = _capped(_neighbour_rows(neighbours), all_results[:TOP_N])
 
             method = (f"AI inferred district | Ranked by geodesic distance | "
                       f"provider: {AI_PROVIDER} | model: {AI_MODEL}")

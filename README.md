@@ -165,6 +165,8 @@ $ python main.py --district "Hyderabad" --address "H NO 2-3-744/1, Ganesh Nagar,
 
 It is **surfaced, never substituted** — the district you asked for keeps its own ranking underneath, because nearest in a straight line is not the same as correct jurisdiction. The check runs on every rung that narrows to a single district: one you type (Case 2), one read out of the address (3b), and one the AI infers (3c) — where it matters most, since a wrong guess otherwise puts the true station in a district that is never searched. It costs no extra API call: station coordinates are cached and the address geocode is reused.
 
+The list stays short: **3 as usual, 5 at the very most.** Only a station clearly nearer earns one of the extra places — the table is meant to be compared at a glance, not scrolled.
+
 Same tool, opposite directions — and every station printed is a real row from your Excel, never invented. (Outputs above are actual runs against the Telangana dataset.)
 
 ## The Impact — Why It Matters
@@ -470,6 +472,7 @@ GeoSense/
 | `FUZZY_CUTOFF` | `80` | Minimum fuzzy score (0–100) to accept a match |
 | `LOCALITY_CUTOFF` | `86` | Stricter cutoff for address-locality scans |
 | `TOP_N` | `3` | Number of results to return from the matched district. A nearer station outside it is listed in addition, so a row count above this is expected and explained by the `*` legend |
+| `MAX_RESULTS` | `5` | v2 (`v2/config.py`): hard ceiling on the whole table. Normal lookups stay at `TOP_N`; a genuinely nearer station outside the district may push past it, but never beyond this. Enforced on the final list, so raising `TOP_N` or `CROSS_DISTRICT_MAX` cannot quietly produce a longer table |
 | `DISTANCE_WARN_KM` | `30` | v2 (`v2/config.py`): flag if the nearest station is farther than this |
 | `CROSS_DISTRICT_MARGIN_KM` | `1.0` | v2 (`v2/config.py`): how much nearer a station outside the matched district must be before it is shown. Keeps it to a real difference — a neighbour 100 m closer changes no decision |
 | `CROSS_DISTRICT_MAX` | `2` | v2 (`v2/config.py`): most such neighbours to list, nearest first |

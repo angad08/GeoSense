@@ -34,3 +34,11 @@ DISTANCE_WARN_KM = 30   # Case 2: if nearest PS in the stated district is farthe
 # nothing, so only one nearer by this much is worth showing.
 CROSS_DISTRICT_MARGIN_KM = 1.0
 CROSS_DISTRICT_MAX       = 2    # at most this many neighbours, nearest first
+
+# Hard ceiling on the whole table. Normal lookups stay at TOP_N (3); a genuinely
+# nearer station outside the district may push past that, but the list must stay
+# short enough to compare at a glance. Enforced on the final list rather than
+# left to TOP_N + CROSS_DISTRICT_MAX happening to add up, so raising either one
+# cannot quietly produce a longer table. Neighbours lead the list, so trimming
+# takes from the far end of the district's own ranking.
+MAX_RESULTS = 5
