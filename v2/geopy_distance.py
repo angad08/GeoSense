@@ -469,6 +469,13 @@ def build_station_query(name, mode, district, state):
         # Deliberately no "Police Station": see search_name() — that phrase is
         # what makes Google answer with the district's own station instead.
         return f"{name}, {district}, {state}, India"
+    if mode == "station_wide":
+        # District dropped. For a station whose name already contains its
+        # district ("SADAR TARN TARAN" in TARN TARAN) the default repeats the
+        # word and Google answers with the district rather than the station.
+        # Safe to drop because the district is still enforced afterwards, by
+        # the sibling-distance check on whatever comes back.
+        return f"{name} Police Station, {state}, India"
     return f"{name} Police Station, {district}, {state}, India"
 
 
@@ -641,6 +648,22 @@ def _query_candidates(ps, district, state):
             return
         seen.add((n.upper(), mode))
         out.append((n, mode, why))
+
+    # When the station's own name already contains its district — "SADAR TARN
+    # TARAN" in TARN TARAN — the default query says the district twice and
+    # Google answers with the district itself: CITY X and SADAR X collapse onto
+    # one town point, and are then blanked as a collision. Asking without the
+    # district is the only phrasing that separates them.
+    #
+    # This goes BEFORE the default deliberately. The ladder stops at the first
+    # candidate that passes the guards, and for these names the default does
+    # pass — it returns the town, which is wrong but not detectably so until
+    # the batch collision check runs much later. Measured: CITY and SADAR of
+    # TARN TARAN, FARIDKOT and MOGA all resolved to 0.00 km apart via the
+    # default, and 10-15 km apart without the district.
+    bare = re.sub(r"\s*\(.*?\)", "", str(district)).strip().upper()
+    if bare and bare in name.upper() and name.upper() != bare:
+        add(name, "station_wide", "name already contains the district; district dropped")
 
     add(name, "station", "default phrasing")
     add(name, "place", "named after its town; asked as a place")
