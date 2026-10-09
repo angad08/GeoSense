@@ -88,5 +88,58 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(values["PREDICTED PS"], "")
 
 
+class BannedStatesTest(unittest.TestCase):
+    """
+    A blocked state must be refused on every route into the ladder, and must
+    leave the ordinary path untouched when nothing is blocked.
+    """
+
+    def setUp(self):
+        import pandas as pd
+        from common.config import COL_STATE, COL_DISTRICT, COL_PS
+        self.df = pd.DataFrame({
+            COL_STATE:    ["PUNJAB", "PUNJAB", "TELANGANA", "TELANGANA"],
+            COL_DISTRICT: ["AMRITSAR", "AMRITSAR", "HYDERABAD", "HYDERABAD"],
+            COL_PS:       ["B DIVISION", "MAQBOOL PURA", "AMBERPET", "KACHIGUDA"],
+        })
+
+    def _with_blocklist(self, mapping):
+        from common import state_filter
+        return patch.object(state_filter, "_banned", mapping)
+
+    def test_nothing_blocked_leaves_the_ladder_alone(self):
+        from v2 import engine
+        with self._with_blocklist({}):
+            out = engine.find_best_match("", "", "HYDERABAD", self.df, None)
+        self.assertNotEqual(out.get("case"), 0)
+        self.assertFalse(out.get("blocked"))
+
+    def test_typed_district_in_a_blocked_state_is_refused(self):
+        from v2 import engine
+        with self._with_blocklist({"PUNJAB": "under review"}):
+            out = engine.find_best_match("", "", "AMRITSAR", self.df, None)
+        self.assertTrue(out["blocked"])
+        self.assertEqual(out["results"], [])
+        self.assertIn("PUNJAB", out["warning"])
+        self.assertIn("under review", out["warning"])
+
+    def test_typed_station_in_a_blocked_state_is_refused(self):
+        from v2 import engine
+        with self._with_blocklist({"PUNJAB": ""}):
+            out = engine.find_best_match("", "B DIVISION", "", self.df, None)
+        self.assertTrue(out["blocked"])
+        self.assertEqual(out["results"], [])
+
+    def test_a_blocked_state_never_appears_in_an_all_states_search(self):
+        # No state named, so every state is searched: the blocked one's rows
+        # must not be among the candidates at all.
+        from v2 import engine
+        with self._with_blocklist({"PUNJAB": ""}):
+            out = engine.find_best_match("", "", "HYDERABAD", self.df, None)
+        for row in out.get("results", []):
+            self.assertNotEqual(str(row.get("state", "")).upper(), "PUNJAB")
+            self.assertNotEqual(str(row.get("district", "")).upper(), "AMRITSAR")
+
+
 if __name__ == "__main__":
     unittest.main()

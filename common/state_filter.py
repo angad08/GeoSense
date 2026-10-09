@@ -20,11 +20,58 @@ recognised: they occur inside ordinary address text, and a wrong narrowing
 would hide the correct station entirely.
 """
 
+import csv
 import re
 
 from rapidfuzz import fuzz
 
-from common.config import COL_STATE, STATE_MATCH_CUTOFF
+from common.config import COL_STATE, STATE_MATCH_CUTOFF, BANNED_STATES_FILE
+
+_banned = None
+
+
+def banned_states(refresh=False):
+    """
+    States the owner has blocked, as {STATE: note}.
+
+    Read from BANNED_STATES_FILE (DISTRICT-style CSV: STATE, NOTE). A missing or
+    empty file blocks nothing, so the default behaviour is unchanged.
+
+    A blocked state is refused, not quietly filtered: a lookup that silently
+    returned nothing would look like "no station found", and the officer would
+    go looking for one. The refusal says which state and what to do about it.
+    """
+    global _banned
+    if _banned is not None and not refresh:
+        return _banned
+    _banned = {}
+    if BANNED_STATES_FILE.exists():
+        try:
+            with open(BANNED_STATES_FILE, newline="", encoding="utf-8-sig") as fh:
+                for row in csv.DictReader(fh):
+                    name = str(row.get("STATE") or "").strip().upper()
+                    if name:
+                        _banned[name] = str(row.get("NOTE") or "").strip()
+        except Exception:
+            _banned = {}
+    return _banned
+
+
+def is_banned(state):
+    """True when `state` is on the blocklist (case / spacing insensitive)."""
+    return str(state or "").strip().upper() in banned_states()
+
+
+def banned_message(state):
+    """What to tell the officer when a lookup lands in a blocked state."""
+    name = str(state or "").strip().upper()
+    note = banned_states().get(name, "")
+    msg = (f"{name} is blocked by the owner — no station, district or address "
+           f"in {name} will be looked up.")
+    if note:
+        msg += f" Reason: {note}."
+    return msg + (" Approve the state (remove it from data/banned_states.csv) "
+                  "and run the lookup again.")
 
 
 def _words(text):

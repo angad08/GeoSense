@@ -37,7 +37,8 @@ from common.matcher import (
     find_ps_by_localities,
     find_district_by_localities,
 )
-from common.state_filter import filter_by_state
+from common.state_filter import (filter_by_state, banned_states, is_banned,
+                                 banned_message)
 from v2.ai_engine import ai_infer_district
 from v2.geopy_distance import (
     rank_ps_by_distance, rank_ps_nearby_any_district,
@@ -59,6 +60,33 @@ def find_best_match(address, known_ps, known_district, df, ai_client):
     are marked LOW with a warning: the distance cannot tell those apart.
     """
     scoped_df, state_scope, state = filter_by_state(address, df)
+
+    # Blocked states are refused here, before any rung runs, so no path can
+    # return one of their stations — not the address, not a typed district, not
+    # a typed station, not the AI. Refused rather than filtered out: a silent
+    # empty result reads as "no station found" and sends the officer looking.
+    blocked = banned_states()
+    if blocked:
+        if state and is_banned(state):
+            return _blocked_result(state, state_scope)
+
+        # No single state named, so the search would span every state. Drop the
+        # blocked ones; if the typed station or district exists only there, say
+        # so rather than reporting nothing found.
+        if COL_STATE in scoped_df.columns:
+            typed = str(known_ps or known_district or "").strip().upper()
+            if typed:
+                hits = scoped_df[
+                    scoped_df[COL_PS].astype(str).str.strip().str.upper().eq(typed)
+                    | scoped_df[COL_DISTRICT].astype(str).str.strip().str.upper().eq(typed)]
+                if len(hits):
+                    states = {str(s).strip().upper() for s in hits[COL_STATE]}
+                    if states and all(s in blocked for s in states):
+                        return _blocked_result(sorted(states)[0], state_scope)
+
+            keep = ~scoped_df[COL_STATE].astype(str).str.strip().str.upper().isin(blocked)
+            scoped_df = scoped_df[keep].reset_index(drop=True)
+
     result = _find_best_match(address, known_ps, known_district, scoped_df, ai_client,
                               state_named=state is not None)
     uncertain = [r for r in result.get("results", [])
@@ -119,6 +147,26 @@ def _merge_relisted_stations(result):
 
 def _km_label(km):
     return f"~{round(km, 1)} km" if km is not None else "N/A"
+
+
+def _blocked_result(state, state_scope):
+    """
+    The result for a lookup that landed in a blocked state.
+
+    Deliberately shaped like any other result (case / confidence / method /
+    results) so the CLI, the log and anything else reading these dicts need no
+    special case. The empty `results` is what stops a station being shown; the
+    warning is what stops it being mistaken for "nothing found".
+    """
+    return {
+        "case":        0,
+        "confidence":  "NONE",
+        "method":      f"Blocked state: {str(state).strip().upper()} — lookup refused",
+        "results":     [],
+        "warning":     banned_message(state),
+        "state_scope": state_scope,
+        "blocked":     True,
+    }
 
 
 # ── Cross-district neighbours ─────────────────────────────────────────────────

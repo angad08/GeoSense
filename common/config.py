@@ -55,6 +55,11 @@ COL_LNG        = "LNG"
 # every safety check still applies to the result.
 SEARCH_ALIAS_FILE = PROJECT_ROOT / "data" / "station_search_names.csv"
 
+# States the owner has blocked. Any lookup that lands in one is refused rather
+# than answered — see common/state_filter.py. An absent or empty file blocks
+# nothing, which is the default.
+BANNED_STATES_FILE = PROJECT_ROOT / "data" / "banned_states.csv"
+
 # ── Coordinate Sanity Check ────────────────────────────────────────────────────
 # A geocoded station is written only if Google places it in the SAME state as
 # the row's own STATE cell (checked in v2/geopy_distance.py against the result's
